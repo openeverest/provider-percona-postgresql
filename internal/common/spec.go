@@ -8,4 +8,7 @@ const (
 	// TODO: Define component names matching those in provider-config.yaml.
 	// Example:
 	// ComponentDatabase = "provider-percona-postgresql-db"
+
+	ComponentProxy         = "proxy"
+	ComponentTypePgbouncer = "pgbouncer"
 )

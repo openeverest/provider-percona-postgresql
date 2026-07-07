@@ -1,15 +1,10 @@
 # Component type version catalog.
 # Add new versions here when operator releases are available.
 # Mark exactly one version per type as `default: true`.
-#
-# Run `provider-sdk add component` to populate this file automatically.
-#
-# Example:
-# componentTypes:
-#   mongod:
-#     versions:
-#     - version: "1.0.0"
-#       image: example/my-database:1.0.0
-#       default: true
 
-componentTypes: {}
+componentTypes:
+    pgbouncer:
+        versions:
+            - default: true
+              image: example/pgbouncer:1.0.0
+              version: 1.0.0

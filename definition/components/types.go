@@ -7,3 +7,8 @@
 //
 // +k8s:openapi-gen=true
 package components
+
+// PgbouncerCustomSpec defines custom configuration for pgbouncer components.
+// Add fields here when the pgbouncer component type needs custom configuration
+// beyond what the base Instance spec provides.
+type PgbouncerCustomSpec struct{}
