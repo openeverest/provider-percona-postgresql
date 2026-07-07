@@ -1,67 +1,118 @@
-# Percona Postgresql Operator Provider
+# provider-percona-postgresql
 
-This directory contains an implementation of a Percona Postgresql Operator Provider (PG) provider.
+An [OpenEverest](https://github.com/openeverest) provider.
 
-## 🚀 Quick Start
+> **New to provider development?** See `github.com/openeverest/provider-sdk/blob/main/PROVIDER_DEVELOPMENT.md` for a complete guide.
 
-### Prerequisites
+## Prerequisites
 
-1. A Kubernetes cluster:
+- Go 1.26+
+- A Kubernetes cluster (k3d, kind, or remote)
+- [OpenEverest CRDs](https://github.com/openeverest/openeverest) installed
+- Your operator installed and running
 
-```
-make k3d-cluster-up
-```
-
-2. Generate Provider CR manifests (if changed):
+## Quick Start
 
 ```bash
+# Generate all manifests (RBAC, provider spec, Helm chart)
 make generate
-```
 
-3. Install CRDs:
-
-make install-crds
-
-### Run the Provider
-
-```bash
+# Run the provider locally (for development)
 make run
+
+# Or deploy with Helm
+make helm-install
 ```
 
-### Create a Test
+## Development
 
-```bash
-kubectl apply -f examples/instance-simple.yaml
+### Project Structure
+
+```
+cmd/provider/              # Entry point
+internal/
+  provider/
+    provider.go            # ProviderInterface implementation (Validate/Sync/Status/Cleanup)
+    rbac.go                # Kubebuilder RBAC markers
+  common/
+    spec.go                # Component name constants
+definition/
+  provider.yaml            # Provider name + component→type mapping
+  versions.yaml            # Component type version/image catalog
+  types.go                 # Shared Go types
+  components/
+    types.go               # Component custom spec types
+  topologies/
+    <topology>/
+      topology.yaml        # Topology config + UI schema
+      types.go             # Topology-specific config types
+config/
+  rbac/
+    role.yaml              # Generated ClusterRole (do not edit manually)
+charts/provider-percona-postgresql/     # Helm chart for deployment
+  generated/
+    rbac-rules.yaml        # Generated RBAC rules (do not edit manually)
+    provider-spec.yaml     # Generated Provider CR spec (do not edit manually)
+  templates/               # Helm templates
+examples/
+  instance-example.yaml    # Example Instance CR
+  instance-simple.yaml     # Minimal Instance CR
+dev/
+  k3d_config.yaml          # Local k3d cluster config
+hack/                      # Helper scripts
+gen.go                     # go:generate entry point
+Makefile                   # Build, generate, and deploy targets
+Dockerfile
 ```
 
-Watch the provider logs and check the PG resource:
+### Make Targets
+
+| Target                  | Description                                                |
+|-------------------------|-------------------------------------------------------------|
+| `make generate`         | Run all code generation (RBAC + Helm sync + provider spec) |
+| `make run`              | Run the provider locally                                   |
+| `make build`            | Build the provider binary                                  |
+| `make docker-build`     | Build the container image                                  |
+| `make helm-install`     | Deploy with Helm                                           |
+| `make helm-template`    | Render Helm templates locally (dry-run)                    |
+| `make test`             | Run unit tests                                             |
+| `make test-integration` | Run kuttl integration tests                                |
+| `make verify`           | Check generated files are up-to-date (CI)                  |
+| `make lint`             | Run golangci-lint                                          |
+
+> For development patterns (RBAC, watches, code generation), see [PROVIDER_DEVELOPMENT.md](https://github.com/openeverest/provider-sdk/blob/main/PROVIDER_DEVELOPMENT.md).
+
+## Deployment
+
+### Helm
 
 ```bash
-kubectl get pg
-kubectl get instance
+# Install
+helm install provider-percona-postgresql charts/provider-percona-postgresql/ --create-namespace
+
+# Upgrade
+helm upgrade provider-percona-postgresql charts/provider-percona-postgresql/
+
+# Uninstall
+helm uninstall provider-percona-postgresql
 ```
 
-## 🧪 Running Integration Tests
+### Local Development
 
-The `test/integration/` directory contains kuttl tests that verify the provider's behavior.
-
-### Prerequisites for Tests
-
-1. SDK CRDs installed (see Quick Start above)
-2. Provider running in the background:
 ```bash
+# Create a local k3d cluster
+make k3d-cluster-up
+
+# Run the provider locally against the cluster
 make run
-```
 
-### Running the Tests
-
-```bash
-# From the examples directory:
+# Run integration tests
 make test-integration
 
-# Or run directly:
-cd examples
-. ./test/vars.sh && kubectl kuttl test --config ./test/integration/kuttl.yaml
+# Tear down the cluster
+make k3d-cluster-down
 ```
 
-**Note:** The tests assume the provider is already running and will create/update/delete Instance resources to verify correct behavior.
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE) for details.

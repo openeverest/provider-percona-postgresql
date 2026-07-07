@@ -1,0 +1,17 @@
+module github.com/openeverest/provider-percona-postgresql
+
+go 1.26.2
+
+require (
+	github.com/openeverest/openeverest/v2 v2.0.0-20260514064117-72f7d8fb4820
+	k8s.io/api v0.36.0
+	k8s.io/apimachinery v0.36.0
+	sigs.k8s.io/controller-runtime v0.24.0
+)
+
+tool github.com/openeverest/provider-sdk
+
+// TODO: Add your operator dependency, e.g.:
+// require github.com/example/my-operator v1.0.0
+//
+// Then run: go mod tidy

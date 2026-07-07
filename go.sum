@@ -1,0 +1,4 @@
+github.com/openeverest/openeverest/v2 v2.0.0-20260514064117-72f7d8fb4820/go.mod h1:imiWkGnxy7FhqpkmN4k7PHeAtXn5d6xkmnwYhYR75TI=
+k8s.io/api v0.36.0/go.mod h1:m1LVrGPNYax5NBHdO+QuAedXyuzTt4RryI/qnmNvs34=
+k8s.io/apimachinery v0.36.0/go.mod h1:FklypaRJt6n5wUIwWXIP6GJlIpUizTgfo1T/As+Tyxc=
+sigs.k8s.io/controller-runtime v0.24.0/go.mod h1:vFkfY5fGt5xAC/sKb8IBFKgWPNKG9OUG29dR8Y2wImw=
