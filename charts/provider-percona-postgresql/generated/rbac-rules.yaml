@@ -51,3 +51,27 @@
     - get
     - list
     - watch
+- apiGroups:
+    - pgv2.percona.com
+  resources:
+    - perconapgclusters
+  verbs:
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
+- apiGroups:
+    - pgv2.percona.com
+  resources:
+    - perconapgclusters/finalizers
+  verbs:
+    - update
+- apiGroups:
+    - pgv2.percona.com
+  resources:
+    - perconapgclusters/status
+  verbs:
+    - get

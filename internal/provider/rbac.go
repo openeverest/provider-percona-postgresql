@@ -28,3 +28,10 @@ package provider
 //
 //   - Access PVCs (if managing storage):
 //   // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+
+// =============================================================================
+// PROVIDER-SPECIFIC RBAC — Percona PostgreSQL operator resources.
+// =============================================================================
+// +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/status,verbs=get
+// +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/finalizers,verbs=update
