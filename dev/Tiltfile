@@ -21,7 +21,9 @@ def str2bool(v):
 # ===========================
 # The OpenEverest core chart installs CRDs and multiple workloads; 30s (the
 # default) is not enough if container images are not cached on cold start.
-update_settings(k8s_upsert_timeout_secs=120)
+# Keep this configurable for slower environments.
+k8s_upsert_timeout_secs = int(os.getenv('K8S_UPSERT_TIMEOUT_SECS', '600'))
+update_settings(k8s_upsert_timeout_secs=k8s_upsert_timeout_secs)
 
 # ===========================
 # Configuration (.env)
@@ -97,6 +99,8 @@ if install_openeverest:
 
     core_flags = [
         '--create-namespace',
+        # Helm hook jobs in the core chart can take a while on fresh clusters.
+        '--timeout', '10m',
         '--set', 'server.initialAdminPassword={0}'.format(ui_admin_password),
         '--set', 'telemetry=false',
         '--set', 'upgrade.preflightChecks=false',

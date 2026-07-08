@@ -21,13 +21,13 @@ rules:
   resources:
   - leases
   verbs:
+  - create
+  - delete
   - get
   - list
-  - watch
-  - create
-  - update
   - patch
-  - delete
+  - update
+  - watch
 - apiGroups:
   - core.openeverest.io
   resources:
@@ -35,9 +35,9 @@ rules:
   verbs:
   - get
   - list
-  - watch
-  - update
   - patch
+  - update
+  - watch
 - apiGroups:
   - core.openeverest.io
   resources:
@@ -50,8 +50,8 @@ rules:
   - instances/status
   verbs:
   - get
-  - update
   - patch
+  - update
 - apiGroups:
   - core.openeverest.io
   resources:

@@ -9,6 +9,7 @@ const (
 	// Example:
 	// ComponentDatabase = "provider-percona-postgresql-db"
 
+	ComponentEngine        = "engine"
 	ComponentProxy         = "proxy"
 	ComponentTypePgbouncer = "pgbouncer"
 )

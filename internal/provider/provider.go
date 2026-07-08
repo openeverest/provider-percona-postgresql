@@ -1,15 +1,13 @@
 package provider
 
 import (
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	"fmt"
 
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
-
-	// TODO: Import your operator's API types package, e.g.:
-	// operatorv1 "github.com/example/my-operator/api/v1"
-
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
+	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // Compile-time check that Provider implements the required interface.
@@ -25,13 +23,11 @@ func New() *Provider {
 	return &Provider{
 		BaseProvider: controller.BaseProvider{
 			ProviderName: common.ProviderName,
-			SchemeFuncs:  []func(*runtime.Scheme) error{
-				// TODO: Register your operator's scheme, e.g.:
-				// operatorv1.SchemeBuilder.AddToScheme,
+			SchemeFuncs: []func(*runtime.Scheme) error{
+				pgv2.AddToScheme,
 			},
 			WatchConfigs: []controller.WatchConfig{
-				// TODO: Watch your operator's primary resource, e.g.:
-				// controller.WatchOwned(&operatorv1.MyDatabase{}),
+				controller.WatchOwned(&pgv2.PerconaPGCluster{}),
 			},
 		},
 	}
@@ -64,20 +60,44 @@ func (p *Provider) Sync(c *controller.Context) error {
 	l := log.FromContext(c.Context())
 	l.Info("Syncing instance", "name", c.Name())
 
-	// TODO: Implement sync logic.
-	// Typical pattern:
-	//   1. Build the operator CR spec from the Instance spec
-	//   2. Use c.Apply() to create/update the operator resource
-	//
-	// Example:
-	//   cr := &operatorv1.MyDatabase{
-	//       ObjectMeta: metav1.ObjectMeta{
-	//           Name:      c.Name(),
-	//           Namespace: c.Namespace(),
-	//       },
-	//       Spec: buildSpec(c),
-	//   }
-	//   return c.Apply(cr)
+	defer l.Info("PXC cluster synced", "cluster", c.Name())
+
+	meta := c.ObjectMeta(c.Name())
+	meta.Finalizers = []string{
+		"percona.com/delete-ssl",
+		"percona.com/delete-pvc",
+	}
+	cluster := &pgv2.PerconaPGCluster{
+		ObjectMeta: meta,
+		Spec:       defaultSpec(),
+	}
+
+	// Get the engine component spec
+	engine, ok := c.Instance().Spec.Components[common.ComponentEngine]
+	if !ok || engine.Replicas == nil {
+		return fmt.Errorf("instance spec missing %q component replicas", common.ComponentEngine)
+	}
+	if len(cluster.Spec.InstanceSets) == 0 {
+		cluster.Spec.InstanceSets = pgv2.PGInstanceSets{{Name: "instance1"}}
+	}
+	cluster.Spec.InstanceSets[0].Replicas = engine.Replicas
+
+	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]
+	if !ok || proxy.Type == "" || proxy.Replicas == nil {
+		return fmt.Errorf("instance spec has invalid %q component; this should be caught by ValidatePXC", common.ComponentProxy)
+	}
+
+	proxyType := proxy.Type
+	proxyReplicas := proxy.Replicas
+
+	if proxyType == common.ComponentTypePgbouncer {
+		cluster.Spec.Proxy = &pgv2.PGProxySpec{
+			PGBouncer: &pgv2.PGBouncerSpec{
+				Replicas: proxyReplicas,
+			},
+		}
+	}
+
 	return nil
 }
 
