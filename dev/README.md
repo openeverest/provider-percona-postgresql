@@ -4,6 +4,9 @@ This directory contains a [Tilt](https://tilt.dev/) setup for developing
 `provider-percona-postgresql`. It installs the latest released OpenEverest v2 core and
 then builds and deploys this provider, with live-reload on every code change.
 
+The Percona PostgreSQL Operator is installed as a Helm dependency of the
+provider chart.
+
 You do **not** need a local checkout of the OpenEverest core.
 
 ## Prerequisites

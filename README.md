@@ -9,7 +9,7 @@ An [OpenEverest](https://github.com/openeverest) provider.
 - Go 1.26+
 - A Kubernetes cluster (k3d, kind, or remote)
 - [OpenEverest CRDs](https://github.com/openeverest/openeverest) installed
-- Your operator installed and running
+- Access to pull Helm dependencies from https://percona.github.io/percona-helm-charts/
 
 ## Quick Start
 
@@ -73,6 +73,7 @@ Dockerfile
 | `make run`              | Run the provider locally                                   |
 | `make build`            | Build the provider binary                                  |
 | `make docker-build`     | Build the container image                                  |
+| `make helm-deps`        | Download chart dependencies (including pg-operator)        |
 | `make helm-install`     | Deploy with Helm                                           |
 | `make helm-template`    | Render Helm templates locally (dry-run)                    |
 | `make test`             | Run unit tests                                             |
@@ -87,6 +88,9 @@ Dockerfile
 ### Helm
 
 ```bash
+# Pull subchart dependencies (operator)
+helm dependency build charts/provider-percona-postgresql/
+
 # Install
 helm install provider-percona-postgresql charts/provider-percona-postgresql/ --create-namespace
 

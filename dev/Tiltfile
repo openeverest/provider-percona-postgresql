@@ -135,6 +135,16 @@ local_resource(
 )
 
 local_resource(
+    'provider-helm-deps',
+    cmd='helm dependency build {0}'.format(chart_dir),
+    deps=[
+        '{0}/Chart.yaml'.format(chart_dir),
+        '{0}/values.yaml'.format(chart_dir),
+    ],
+    labels=['provider'],
+)
+
+local_resource(
     'provider-build',
     'cd {0} && {1} go build -o bin/provider ./cmd/provider/'.format(
         provider_dir, provider_build_env),
@@ -172,7 +182,7 @@ docker_build_with_restart(
 # Deployed with a real `helm upgrade --install` (via the helm_resource
 # extension). Tilt injects the locally built image into the chart's
 # image.repository/image.tag values and live-updates the running pod. Using
-# helm_resource also guarantees the Provider CR is applied only after the core
+# helm_resource also guarantees the Provider CR is applied only after required
 # CRDs exist.
 wait_provider_crd_deps = []
 if install_openeverest:
@@ -210,7 +220,11 @@ exit 1
     labels=['provider'],
 )
 
-provider_resource_deps = ['provider-build', 'wait-provider-crd']
+provider_resource_deps = [
+    'provider-build',
+    'provider-helm-deps',
+    'wait-provider-crd',
+]
 
 helm_resource(
     'provider-percona-postgresql',

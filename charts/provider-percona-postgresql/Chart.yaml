@@ -13,8 +13,8 @@ sources:
   - https://github.com/openeverest/provider-percona-postgresql
 maintainers:
   - name: OpenEverest Contributors
-# TODO: If your provider depends on an operator Helm chart, add it here.
-# dependencies:
-#   - name: my-operator
-#     version: "1.0.0"
-#     repository: https://example.com/helm-charts/
+dependencies:
+  - name: pg-operator
+    version: "2.9.0"
+    repository: https://percona.github.io/percona-helm-charts/
+    condition: pg-operator.enabled

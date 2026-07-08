@@ -18,3 +18,4 @@
 
 NOTE: Ensure that the following prerequisites are installed in your cluster:
   - OpenEverest CRDs (Instances, Providers)
+  - Percona PostgreSQL Operator is installed by this chart as a dependency
