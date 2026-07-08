@@ -38,8 +38,9 @@ if os.path.exists(local_env_file):
 # the core from source in a separate Tilt instance.
 install_openeverest = str2bool(os.getenv('INSTALL_OPENEVEREST', 'true'))
 
-# Released OpenEverest core version to install. Empty means latest.
-openeverest_version = os.getenv('OPENEVEREST_VERSION', '')
+# Released OpenEverest core version to install. Default is pinned to a v2
+# pre-release because Helm's "latest" skips pre-release tags.
+openeverest_version = os.getenv('OPENEVEREST_VERSION', '2.0.0-dev.1')
 
 # Helm repository that hosts the OpenEverest core chart.
 openeverest_helm_repo = os.getenv(
@@ -173,9 +174,43 @@ docker_build_with_restart(
 # image.repository/image.tag values and live-updates the running pod. Using
 # helm_resource also guarantees the Provider CR is applied only after the core
 # CRDs exist.
-provider_resource_deps = ['provider-build']
+wait_provider_crd_deps = []
 if install_openeverest:
-    provider_resource_deps = provider_resource_deps + ['openeverest']
+    wait_provider_crd_deps = ['openeverest']
+
+local_resource(
+    'wait-provider-crd',
+    cmd='''
+set -eu
+timeout_secs="${WAIT_PROVIDER_CRD_TIMEOUT_SECS:-300}"
+deadline=$(( $(date +%s) + timeout_secs ))
+expected_crd="providers.core.openeverest.io"
+
+echo "Waiting for CRD ${expected_crd} (timeout ${timeout_secs}s)..."
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  if kubectl get crd "$expected_crd" >/dev/null 2>&1; then
+    kubectl wait --for=condition=Established --timeout="${timeout_secs}s" "crd/${expected_crd}"
+    # API discovery can lag briefly after the CRD is established.
+    if kubectl api-resources --api-group=core.openeverest.io | grep -q '^providers[[:space:]]'; then
+      echo "Provider CRD is ready"
+      exit 0
+    fi
+  fi
+  sleep 2
+done
+
+echo "Timed out waiting for ${expected_crd}."
+if kubectl get crd | grep -q 'everest.percona.com'; then
+  echo "Detected CRDs from everest.percona.com, but this provider expects core.openeverest.io/v1alpha1."
+  echo "Use OpenEverest v2 core in this cluster or switch to a compatible provider build."
+fi
+exit 1
+''',
+    resource_deps=wait_provider_crd_deps,
+    labels=['provider'],
+)
+
+provider_resource_deps = ['provider-build', 'wait-provider-crd']
 
 helm_resource(
     'provider-percona-postgresql',

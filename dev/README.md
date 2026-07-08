@@ -52,7 +52,7 @@ All settings live in `dev/.env` (see `dev/.env.example`). Common options:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `INSTALL_OPENEVEREST` | `true` | Install the released OpenEverest core. |
-| `OPENEVEREST_VERSION` | _(latest)_ | Pin a specific core chart version. |
+| `OPENEVEREST_VERSION` | `2.0.0-dev.1` | Pin a specific core chart version. |
 | `PROVIDER_NAMESPACE` | `default` | Namespace for the provider + DB operator. |
 | `ENABLE_MINIO` | `false` | Deploy MinIO + a `BackupStorage` CR for backups. |
 
