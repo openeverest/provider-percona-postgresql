@@ -6,6 +6,7 @@ import (
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -142,8 +143,23 @@ func (p *Provider) Cleanup(c *controller.Context) error {
 	l := log.FromContext(c.Context())
 	l.Info("Cleaning up instance", "name", c.Name())
 
-	// TODO: Implement cleanup logic if needed.
-	// Resources with owner references set via c.Apply() are automatically
-	// garbage collected. Only implement this if you need custom cleanup.
-	return nil
+	cluster := &pgv2.PerconaPGCluster{}
+	err := c.Get(cluster, c.Name())
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Cluster is already gone; cleanup is complete.
+			return nil
+		}
+		return fmt.Errorf("get PerconaPGCluster %q: %w", c.Name(), err)
+	}
+
+	if cluster.GetDeletionTimestamp().IsZero() {
+		if err := c.Delete(cluster); err != nil {
+			return fmt.Errorf("delete PerconaPGCluster %q: %w", c.Name(), err)
+		}
+		l.Info("Issued delete for PerconaPGCluster", "cluster", c.Name())
+	}
+
+	// Keep the Instance finalizer until the managed PG CR is fully removed.
+	return controller.WaitFor("waiting for PerconaPGCluster to be deleted")
 }
