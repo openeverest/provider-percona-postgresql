@@ -40,36 +40,40 @@ ui:
                 numberOfNodes:
                     fieldParams:
                         label: Number of nodes
+                        defaultValue: 2
                     path: spec.components.engine.replicas
                     uiType: number
                     validation:
-                        max: 7
                         min: 1
                 resources:
                     components:
                         cpu:
                             fieldParams:
                                 label: CPU
+                                defaultValue: 1
                             path: spec.components.engine.resources.requests.cpu
                             uiType: number
                             validation:
-                                max: 10
                                 min: 1
                         disk:
                             fieldParams:
                                 label: Disk
+                                defaultValue: 25
+                                badge: Gi
+                                badgeToApi: true
                             path: spec.components.engine.storage.size
                             uiType: number
                             validation:
-                                max: 100
-                                min: 10
+                                min: 1
                         memory:
                             fieldParams:
                                 label: Memory
+                                defaultValue: 2
+                                badge: Gi
+                                badgeToApi: true
                             path: spec.components.engine.resources.requests.memory
                             uiType: number
                             validation:
-                                max: 10
                                 min: 1
                     groupType: line
                     uiType: group
