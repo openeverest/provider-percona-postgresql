@@ -9,10 +9,21 @@ import (
 
 // defaultSpec provides a minimal valid starting point for PerconaPGCluster.
 func defaultSpec() pgv2.PerconaPGClusterSpec {
+	backupsEnabled := false
+
 	return pgv2.PerconaPGClusterSpec{
+		PostgresVersion: 16,
 		InstanceSets: pgv2.PGInstanceSets{
 			{
 				Name: "instance1",
+				DataVolumeClaimSpec: corev1.PersistentVolumeClaimSpec{
+					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+					Resources: corev1.VolumeResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceStorage: resource.MustParse("1Gi"),
+						},
+					},
+				},
 				Resources: corev1.ResourceRequirements{
 					Limits: corev1.ResourceList{},
 				},
@@ -29,6 +40,9 @@ func defaultSpec() pgv2.PerconaPGClusterSpec {
 					},
 				},
 			},
+		},
+		Backups: pgv2.Backups{
+			Enabled: &backupsEnabled,
 		},
 	}
 }

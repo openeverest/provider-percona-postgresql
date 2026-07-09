@@ -83,7 +83,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 	cluster.Spec.InstanceSets[0].Replicas = engine.Replicas
 
 	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]
-	if !ok || proxy.Type == "" {
+	if !ok || proxy.Type == "" || proxy.Replicas == nil {
 		return fmt.Errorf("instance spec has invalid %q component; this should be caught by Validate", common.ComponentProxy)
 	}
 
@@ -95,6 +95,10 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return fmt.Errorf("instance spec has unsupported %q component type %q; only %q is supported", common.ComponentProxy, proxyType, common.ComponentTypePgbouncer)
 	}
 	cluster.Spec.Proxy.PGBouncer.Replicas = proxy.Replicas
+
+	if err := c.Apply(cluster); err != nil {
+		return err
+	}
 
 	return nil
 }
