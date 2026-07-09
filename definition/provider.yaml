@@ -3,6 +3,8 @@
 # Run `make generate` after making changes.
 
 components:
+    engine:
+        type: postgresql
     proxy:
         type: pgbouncer
 name: provider-percona-postgresql

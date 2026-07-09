@@ -12,3 +12,8 @@ package components
 // Add fields here when the pgbouncer component type needs custom configuration
 // beyond what the base Instance spec provides.
 type PgbouncerCustomSpec struct{}
+
+// PostgresqlCustomSpec defines custom configuration for postgresql components.
+// Add fields here when the postgresql component type needs custom configuration
+// beyond what the base Instance spec provides.
+type PostgresqlCustomSpec struct{}

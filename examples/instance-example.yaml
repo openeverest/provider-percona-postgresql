@@ -14,7 +14,7 @@ spec:
   provider: provider-percona-postgresql
   components:
     engine:
-      type: 
+      type: postgresql
       replicas: 1
       resources:
         limits:

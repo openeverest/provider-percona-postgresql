@@ -11,8 +11,8 @@
 config:
     components:
         engine:
-            defaults:
-                replicas: 3
+            type: postgresql
+            replicas: 3
 ui:
     sections:
         basicInfo:
@@ -20,8 +20,19 @@ ui:
                 version:
                     fieldParams:
                         label: Database Version
-                    path: spec.components.engine.version
+                        optionsPath: spec.versions
+                        optionsPathConfig:
+                            labelPath: name
+                            valuePath: name
+                        modes:
+                            edit:
+                                disabled: true
+                            restore:
+                                disabled: true
+                    path: spec.version
                     uiType: select
+                    validation:
+                        required: true
             description: Provide the basic information for your new database.
             label: Basic Information
         resources:
