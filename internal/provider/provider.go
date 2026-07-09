@@ -60,7 +60,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 	l := log.FromContext(c.Context())
 	l.Info("Syncing instance", "name", c.Name())
 
-	defer l.Info("PXC cluster synced", "cluster", c.Name())
+	defer l.Info("PostgreSQL cluster synced", "cluster", c.Name())
 
 	meta := c.ObjectMeta(c.Name())
 	meta.Finalizers = []string{
@@ -83,20 +83,18 @@ func (p *Provider) Sync(c *controller.Context) error {
 	cluster.Spec.InstanceSets[0].Replicas = engine.Replicas
 
 	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]
-	if !ok || proxy.Type == "" || proxy.Replicas == nil {
-		return fmt.Errorf("instance spec has invalid %q component; this should be caught by ValidatePXC", common.ComponentProxy)
+	if !ok || proxy.Type == "" {
+		return fmt.Errorf("instance spec has invalid %q component; this should be caught by Validate", common.ComponentProxy)
 	}
 
 	proxyType := proxy.Type
-	proxyReplicas := proxy.Replicas
-
-	if proxyType == common.ComponentTypePgbouncer {
-		cluster.Spec.Proxy = &pgv2.PGProxySpec{
-			PGBouncer: &pgv2.PGBouncerSpec{
-				Replicas: proxyReplicas,
-			},
-		}
+	if proxyType == "" {
+		proxyType = common.ComponentTypePgbouncer
 	}
+	if proxyType != common.ComponentTypePgbouncer {
+		return fmt.Errorf("instance spec has unsupported %q component type %q; only %q is supported", common.ComponentProxy, proxyType, common.ComponentTypePgbouncer)
+	}
+	cluster.Spec.Proxy.PGBouncer.Replicas = proxy.Replicas
 
 	return nil
 }

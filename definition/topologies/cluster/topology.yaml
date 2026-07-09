@@ -9,13 +9,17 @@
 # for detailed guidance.
 
 config:
+    configSchema: ClusterTopologyConfig
     components:
         engine:
             type: postgresql
             replicas: 3
+        proxy:
+            type: pgbouncer
+            replicas: 2
 ui:
     sections:
-        basicInfo:
+        databaseVersion:
             components:
                 version:
                     fieldParams:
@@ -33,8 +37,8 @@ ui:
                     uiType: select
                     validation:
                         required: true
-            description: Provide the basic information for your new database.
-            label: Basic Information
+            description: Provide the database version for your new database.
+            label: Database Version
         resources:
             components:
                 numberOfNodes:
@@ -79,6 +83,35 @@ ui:
                     uiType: group
             description: Configure the resources your database will have access to.
             label: Resources
+        proxy:
+          label: "Proxy"
+          description: "Configure a single proxy type for the cluster."
+          components:
+            proxyType:
+              uiType: select
+              path: spec.components.proxy.type
+              fieldParams:
+                label: "Proxy type"
+                defaultValue: "pgbouncer"
+                options:
+                  - label: "PGBouncer"
+                    value: "pgbouncer"
+              validation:
+                required: true
+            proxyNodes:
+              uiType: number
+              path: spec.components.proxy.replicas
+              fieldParams:
+                label: "Number of proxy nodes"
+                defaultValue: 2
+              validation:
+                min: 1
+                int: true
+                required: true
+          componentsOrder:
+            - proxyType
+            - proxyNodes
     sectionsOrder:
-        - basicInfo
+        - databaseVersion
         - resources
+        - proxy
