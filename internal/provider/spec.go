@@ -3,6 +3,7 @@ package provider
 import (
 	corev1 "k8s.io/api/core/v1"
 
+	pgversion "github.com/percona/percona-postgresql-operator/v2/percona/version"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -12,6 +13,7 @@ func defaultSpec() pgv2.PerconaPGClusterSpec {
 	backupsEnabled := false
 
 	return pgv2.PerconaPGClusterSpec{
+		CRVersion:       pgversion.Version(),
 		PostgresVersion: 16,
 		InstanceSets: pgv2.PGInstanceSets{
 			{

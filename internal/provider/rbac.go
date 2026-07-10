@@ -35,3 +35,4 @@ package provider
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/status,verbs=get
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/finalizers,verbs=update
+// +kubebuilder:rbac:groups=backup.openeverest.io,resources=restores,verbs=get;list;watch

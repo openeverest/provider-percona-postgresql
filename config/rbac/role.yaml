@@ -17,6 +17,14 @@ rules:
   - create
   - patch
 - apiGroups:
+  - backup.openeverest.io
+  resources:
+  - restores
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - coordination.k8s.io
   resources:
   - leases

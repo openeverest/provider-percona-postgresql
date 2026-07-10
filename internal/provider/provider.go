@@ -3,6 +3,7 @@ package provider
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
@@ -87,6 +88,12 @@ func (p *Provider) Sync(c *controller.Context) error {
 		cluster.Spec.InstanceSets = pgv2.PGInstanceSets{{Name: "instance1"}}
 	}
 	cluster.Spec.InstanceSets[0].Replicas = engine.Replicas
+	if engine.Image != "" {
+		cluster.Spec.Image = engine.Image
+	}
+	if major, ok := parseMajorVersion(engine.Version); ok {
+		cluster.Spec.PostgresVersion = major
+	}
 
 	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]
 	if !ok || proxy.Type == "" || proxy.Replicas == nil {
@@ -235,6 +242,20 @@ func isConditionTrue(conditions []metav1.Condition, conditionType string) bool {
 		}
 	}
 	return false
+}
+
+func parseMajorVersion(version string) (int, bool) {
+	if version == "" {
+		return 0, false
+	}
+
+	majorPart := strings.SplitN(version, ".", 2)[0]
+	major, err := strconv.Atoi(majorPart)
+	if err != nil {
+		return 0, false
+	}
+
+	return major, true
 }
 
 // Cleanup handles deletion of provider-managed resources.
