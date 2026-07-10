@@ -2,12 +2,17 @@ package provider
 
 import (
 	"fmt"
+	"strconv"
 
+	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -112,26 +117,124 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	l := log.FromContext(c.Context())
 	l.Info("Computing status", "name", c.Name())
 
-	// TODO: Implement status logic.
-	// Typical pattern:
-	//   1. Get the operator CR using c.Get()
-	//   2. Translate its status to a controller.Status
-	//
-	// Example:
-	//   cr := &operatorv1.MyDatabase{}
-	//   if err := c.Get(cr, c.Name()); err != nil {
-	//       return controller.Status{}, err
-	//   }
-	//   if cr.Status.Ready {
-	//       return controller.ReadyWithConnectionDetails(
-	//           controller.ConnectionDetails{
-	//           // Populate connection details.
-	//           },
-	//       ), nil
-	//   }
-	//   return controller.Provisioning("waiting for database to be ready"), nil
+	cluster := &pgv2.PerconaPGCluster{}
+	if err := c.Get(cluster, c.Name()); err != nil {
+		if apierrors.IsNotFound(err) {
+			return controller.Provisioning("waiting for PerconaPGCluster to be created"), nil
+		}
+		return controller.Status{}, fmt.Errorf("get PerconaPGCluster %q: %w", c.Name(), err)
+	}
 
-	return controller.Provisioning("initializing"), nil
+	restoring, err := isRestoreRunning(c)
+	if err != nil {
+		return controller.Status{}, err
+	}
+	if restoring {
+		return controller.Restoring("restore is in progress"), nil
+	}
+
+	resizing, err := isPVCResizing(c, cluster)
+	if err != nil {
+		return controller.Status{}, err
+	}
+	if resizing {
+		return controller.Updating("resizing persistent volumes"), nil
+	}
+
+	switch cluster.Status.State {
+	case pgv2.AppStateInit:
+		return controller.Initializing("database is initializing"), nil
+	case pgv2.AppStateStopping:
+		return controller.Suspending("database is stopping"), nil
+	case pgv2.AppStatePaused:
+		if cluster.Status.Postgres.Size == 0 && cluster.Status.PGBouncer.Size == 0 {
+			return controller.Suspended(), nil
+		}
+		return controller.Suspending("database is paused"), nil
+	}
+
+	if cluster.Status.ObservedGeneration < cluster.Generation {
+		return controller.Updating("applying latest configuration"), nil
+	}
+
+	if cluster.Status.Postgres.Size == 0 {
+		return controller.Provisioning("waiting for postgres replicas to be created"), nil
+	}
+	if cluster.Status.Postgres.Ready < cluster.Status.Postgres.Size {
+		return controller.Provisioning(
+			fmt.Sprintf("waiting for postgres replicas (%d/%d ready)", cluster.Status.Postgres.Ready, cluster.Status.Postgres.Size),
+		), nil
+	}
+	if cluster.Status.PGBouncer.Size > 0 && cluster.Status.PGBouncer.Ready < cluster.Status.PGBouncer.Size {
+		return controller.Provisioning(
+			fmt.Sprintf("waiting for pgbouncer replicas (%d/%d ready)", cluster.Status.PGBouncer.Ready, cluster.Status.PGBouncer.Size),
+		), nil
+	}
+
+	port := int32(5432)
+	if cluster.Spec.Port != nil {
+		port = *cluster.Spec.Port
+	}
+
+	return controller.ReadyWithConnectionDetails(controller.ConnectionDetails{
+		Type:     "postgresql",
+		Provider: common.ProviderName,
+		Host:     cluster.Status.Host,
+		Port:     strconv.Itoa(int(port)),
+	}), nil
+}
+
+func isRestoreRunning(c *controller.Context) (bool, error) {
+	restores, err := c.RestoresForInstance()
+	if err != nil {
+		return false, fmt.Errorf("list restores for instance %q: %w", c.Name(), err)
+	}
+
+	for i := range restores {
+		state := restores[i].Status.State
+		if state == "" || state == backupv1alpha1.RestoreStatePending || state == backupv1alpha1.RestoreStateRunning {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func isPVCResizing(c *controller.Context, cluster *pgv2.PerconaPGCluster) (bool, error) {
+	if !isConditionTrue(cluster.Status.Conditions, "PersistentVolumeResizing") {
+		return false, nil
+	}
+
+	// Work around operator lag in clearing the resize condition by verifying PVC conditions directly.
+	return verifyPVCResizingStatus(c, cluster.GetName())
+}
+
+func verifyPVCResizingStatus(c *controller.Context, instanceName string) (bool, error) {
+	pvcList := &corev1.PersistentVolumeClaimList{}
+	if err := c.List(pvcList, client.MatchingLabels{"app.kubernetes.io/instance": instanceName}); err != nil {
+		return false, fmt.Errorf("list PVCs for instance %q: %w", instanceName, err)
+	}
+
+	for i := range pvcList.Items {
+		for _, condition := range pvcList.Items[i].Status.Conditions {
+			if (condition.Type == corev1.PersistentVolumeClaimResizing ||
+				condition.Type == corev1.PersistentVolumeClaimFileSystemResizePending) &&
+				condition.Status == corev1.ConditionTrue {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+func isConditionTrue(conditions []metav1.Condition, conditionType string) bool {
+	for _, cond := range conditions {
+		if cond.Type == conditionType && cond.Status == metav1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
 
 // Cleanup handles deletion of provider-managed resources.
