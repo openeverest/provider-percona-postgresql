@@ -61,6 +61,17 @@ componentTypes:
             - default: true
               image: percona/percona-pgbouncer:1.25.2-1
               version: 1.25.2-1
+    pgbackrest:
+        versions:
+            - default: false
+              image: percona/percona-pgbackrest:2.57.0-1
+              version: 2.57.0-1
+            - default: false
+              image: percona/percona-pgbackrest:2.58.0-1
+              version: 2.58.0-1
+            - default: true
+              image: percona/percona-pgbackrest:2.58.0-2
+              version: 2.58.0-2
 
 # Version bundles used by UI (spec.version) and runtime component selection.
 versions:

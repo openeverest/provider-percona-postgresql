@@ -12,6 +12,7 @@ import (
 const (
 	componentTypePostgreSQL = "postgresql"
 	componentTypePGBouncer  = "pgbouncer"
+	componentTypePGBackRest = "pgbackrest"
 )
 
 type versionsCatalog struct {
@@ -40,6 +41,11 @@ var (
 // DefaultPGBouncerImage returns the default pgbouncer image from versions.yaml.
 func DefaultPGBouncerImage() (string, bool) {
 	return defaultImageForComponent(componentTypePGBouncer)
+}
+
+// DefaultPGBackRestImage returns the default pgbackrest image from versions.yaml.
+func DefaultPGBackRestImage() (string, bool) {
+	return defaultImageForComponent(componentTypePGBackRest)
 }
 
 // DefaultPostgreSQLImage returns the default postgresql image from versions.yaml.

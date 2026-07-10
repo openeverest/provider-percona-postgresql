@@ -18,10 +18,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-const (
-	defaultPGBackRestImage = "docker.io/percona/percona-pgbackrest:2.58.0-1"
-)
-
 // Compile-time check that Provider implements the required interface.
 var _ controller.ProviderInterface = (*Provider)(nil)
 var _ controller.FieldIndexProvider = (*Provider)(nil)
@@ -133,7 +129,11 @@ func (p *Provider) Sync(c *controller.Context) error {
 		}
 	}
 	if cluster.Spec.Backups.PGBackRest.Image == "" {
-		cluster.Spec.Backups.PGBackRest.Image = defaultPGBackRestImage
+		if image, ok := definition.DefaultPGBackRestImage(); ok {
+			cluster.Spec.Backups.PGBackRest.Image = image
+		} else {
+			return fmt.Errorf("cannot resolve default pgbackrest image from versions catalog")
+		}
 	}
 
 	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]

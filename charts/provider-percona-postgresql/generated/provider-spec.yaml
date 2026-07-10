@@ -2,6 +2,17 @@
 # Do not edit manually. Run `make generate` to update.
 spec:
   componentTypes:
+    pgbackrest:
+      versions:
+        - default: false
+          image: percona/percona-pgbackrest:2.57.0-1
+          version: 2.57.0-1
+        - default: false
+          image: percona/percona-pgbackrest:2.58.0-1
+          version: 2.58.0-1
+        - default: true
+          image: percona/percona-pgbackrest:2.58.0-2
+          version: 2.58.0-2
     pgbouncer:
       versions:
         - default: false
