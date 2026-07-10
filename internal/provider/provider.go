@@ -19,6 +19,7 @@ import (
 
 // Compile-time check that Provider implements the required interface.
 var _ controller.ProviderInterface = (*Provider)(nil)
+var _ controller.FieldIndexProvider = (*Provider)(nil)
 
 // Provider implements controller.ProviderInterface for the provider-percona-postgresql provider.
 type Provider struct {
@@ -35,6 +36,23 @@ func New() *Provider {
 			},
 			WatchConfigs: []controller.WatchConfig{
 				controller.WatchOwned(&pgv2.PerconaPGCluster{}),
+			},
+		},
+	}
+}
+
+// FieldIndexes registers indexes required by helper queries used in status computation.
+func (p *Provider) FieldIndexes() []controller.FieldIndex {
+	return []controller.FieldIndex{
+		{
+			Object:    &backupv1alpha1.Restore{},
+			FieldPath: controller.IndexRestoreInstanceName,
+			Extractor: func(obj client.Object) []string {
+				restore, ok := obj.(*backupv1alpha1.Restore)
+				if !ok || restore.Spec.InstanceName == "" {
+					return nil
+				}
+				return []string{restore.Spec.InstanceName}
 			},
 		},
 	}
