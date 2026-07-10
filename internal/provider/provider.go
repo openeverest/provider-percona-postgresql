@@ -7,6 +7,7 @@ import (
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
+	"github.com/openeverest/provider-percona-postgresql/definition"
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +16,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+const (
+	defaultPGBackRestImage = "docker.io/percona/percona-pgbackrest:2.58.0-1"
 )
 
 // Compile-time check that Provider implements the required interface.
@@ -106,11 +111,29 @@ func (p *Provider) Sync(c *controller.Context) error {
 		cluster.Spec.InstanceSets = pgv2.PGInstanceSets{{Name: "instance1"}}
 	}
 	cluster.Spec.InstanceSets[0].Replicas = engine.Replicas
+	major := cluster.Spec.PostgresVersion
 	if engine.Image != "" {
 		cluster.Spec.Image = engine.Image
 	}
-	if major, ok := parseMajorVersion(engine.Version); ok {
+	if parsedMajor, ok := parseMajorVersion(engine.Version); ok {
+		major = parsedMajor
 		cluster.Spec.PostgresVersion = major
+	}
+	if cluster.Spec.Image == "" {
+		if engine.Version != "" {
+			if image, ok := definition.PostgreSQLImageForVersion(engine.Version); ok {
+				cluster.Spec.Image = image
+			}
+		}
+		if cluster.Spec.Image == "" {
+			cluster.Spec.Image = defaultPostgresImageForMajor(major)
+			if cluster.Spec.Image == "" {
+				return fmt.Errorf("cannot resolve default postgres image from versions catalog")
+			}
+		}
+	}
+	if cluster.Spec.Backups.PGBackRest.Image == "" {
+		cluster.Spec.Backups.PGBackRest.Image = defaultPGBackRestImage
 	}
 
 	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]
@@ -126,6 +149,15 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return fmt.Errorf("instance spec has unsupported %q component type %q; only %q is supported", common.ComponentProxy, proxyType, common.ComponentTypePgbouncer)
 	}
 	cluster.Spec.Proxy.PGBouncer.Replicas = proxy.Replicas
+	if proxy.Image != "" {
+		cluster.Spec.Proxy.PGBouncer.Image = proxy.Image
+	} else if cluster.Spec.Proxy.PGBouncer.Image == "" {
+		if image, ok := definition.DefaultPGBouncerImage(); ok {
+			cluster.Spec.Proxy.PGBouncer.Image = image
+		} else {
+			return fmt.Errorf("cannot resolve default pgbouncer image from versions catalog")
+		}
+	}
 
 	if err := c.Apply(cluster); err != nil {
 		return err
@@ -274,6 +306,17 @@ func parseMajorVersion(version string) (int, bool) {
 	}
 
 	return major, true
+}
+
+func defaultPostgresImageForMajor(major int) string {
+	if image, ok := definition.PostgreSQLDefaultImageForMajor(major); ok {
+		return image
+	}
+	if image, ok := definition.DefaultPostgreSQLImage(); ok {
+		return image
+	}
+
+	return ""
 }
 
 // Cleanup handles deletion of provider-managed resources.
