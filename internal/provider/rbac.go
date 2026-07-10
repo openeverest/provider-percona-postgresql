@@ -32,8 +32,8 @@ package provider
 // =============================================================================
 // PROVIDER-SPECIFIC RBAC — Percona PostgreSQL operator resources.
 // =============================================================================
-// Allow reading Secrets referenced by managed resources.
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// Allow managing connection Secrets in tenant namespaces.
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/status,verbs=get
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/finalizers,verbs=update
