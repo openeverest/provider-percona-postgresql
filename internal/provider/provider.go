@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
-	"github.com/openeverest/provider-percona-postgresql/definition"
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -16,6 +16,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+const (
+	componentTypePostgreSQL = "postgresql"
+	componentTypePGBouncer  = "pgbouncer"
+	componentTypePGBackRest = "pgbackrest"
 )
 
 // Compile-time check that Provider implements the required interface.
@@ -98,6 +104,21 @@ func (p *Provider) Sync(c *controller.Context) error {
 		Spec:       defaultSpec(),
 	}
 
+	providerSpec, err := c.ProviderSpec()
+	if err != nil {
+		return err
+	}
+
+	bundleComponents := map[string]string{}
+	bundleName := selectedVersionBundleName(c, providerSpec)
+	if bundleName != "" {
+		bundle, err := controller.ResolveVersionBundle(providerSpec, bundleName)
+		if err != nil {
+			return err
+		}
+		bundleComponents = bundle.Components
+	}
+
 	// Get the engine component spec
 	engine, ok := c.Instance().Spec.Components[common.ComponentEngine]
 	if !ok || engine.Replicas == nil {
@@ -107,29 +128,30 @@ func (p *Provider) Sync(c *controller.Context) error {
 		cluster.Spec.InstanceSets = pgv2.PGInstanceSets{{Name: "instance1"}}
 	}
 	cluster.Spec.InstanceSets[0].Replicas = engine.Replicas
-	major := cluster.Spec.PostgresVersion
+	engineVersion := engine.Version
+	if engineVersion == "" {
+		engineVersion = bundleComponents[common.ComponentEngine]
+	}
+
 	if engine.Image != "" {
 		cluster.Spec.Image = engine.Image
 	}
-	if parsedMajor, ok := parseMajorVersion(engine.Version); ok {
-		major = parsedMajor
-		cluster.Spec.PostgresVersion = major
+	if parsedMajor, ok := parseMajorVersion(engineVersion); ok {
+		cluster.Spec.PostgresVersion = parsedMajor
 	}
 	if cluster.Spec.Image == "" {
-		if engine.Version != "" {
-			if image, ok := definition.PostgreSQLImageForVersion(engine.Version); ok {
-				cluster.Spec.Image = image
-			}
+		if engineVersion != "" {
+			cluster.Spec.Image = imageForComponentTypeVersion(providerSpec, componentTypePostgreSQL, engineVersion)
 		}
 		if cluster.Spec.Image == "" {
-			cluster.Spec.Image = defaultPostgresImageForMajor(major)
+			cluster.Spec.Image = defaultImageForComponentType(providerSpec, componentTypePostgreSQL)
 			if cluster.Spec.Image == "" {
 				return fmt.Errorf("cannot resolve default postgres image from versions catalog")
 			}
 		}
 	}
 	if cluster.Spec.Backups.PGBackRest.Image == "" {
-		if image, ok := definition.DefaultPGBackRestImage(); ok {
+		if image := defaultImageForComponentType(providerSpec, componentTypePGBackRest); image != "" {
 			cluster.Spec.Backups.PGBackRest.Image = image
 		} else {
 			return fmt.Errorf("cannot resolve default pgbackrest image from versions catalog")
@@ -152,9 +174,18 @@ func (p *Provider) Sync(c *controller.Context) error {
 	if proxy.Image != "" {
 		cluster.Spec.Proxy.PGBouncer.Image = proxy.Image
 	} else if cluster.Spec.Proxy.PGBouncer.Image == "" {
-		if image, ok := definition.DefaultPGBouncerImage(); ok {
+		proxyVersion := proxy.Version
+		if proxyVersion == "" {
+			proxyVersion = bundleComponents[common.ComponentProxy]
+		}
+		if proxyVersion != "" {
+			cluster.Spec.Proxy.PGBouncer.Image = imageForComponentTypeVersion(providerSpec, componentTypePGBouncer, proxyVersion)
+		}
+		if cluster.Spec.Proxy.PGBouncer.Image == "" {
+			image := defaultImageForComponentType(providerSpec, componentTypePGBouncer)
 			cluster.Spec.Proxy.PGBouncer.Image = image
-		} else {
+		}
+		if cluster.Spec.Proxy.PGBouncer.Image == "" {
 			return fmt.Errorf("cannot resolve default pgbouncer image from versions catalog")
 		}
 	}
@@ -308,12 +339,55 @@ func parseMajorVersion(version string) (int, bool) {
 	return major, true
 }
 
-func defaultPostgresImageForMajor(major int) string {
-	if image, ok := definition.PostgreSQLDefaultImageForMajor(major); ok {
-		return image
+func selectedVersionBundleName(c *controller.Context, spec *corev1alpha1.ProviderSpec) string {
+	if c.Instance().Spec.Version != "" {
+		return c.Instance().Spec.Version
 	}
-	if image, ok := definition.DefaultPostgreSQLImage(); ok {
-		return image
+	if c.Instance().Status.Version != "" {
+		return c.Instance().Status.Version
+	}
+	return controller.GetDefaultVersionBundleName(spec)
+}
+
+func imageForComponentTypeVersion(spec *corev1alpha1.ProviderSpec, componentType, version string) string {
+	if spec == nil || version == "" {
+		return ""
+	}
+
+	ct, ok := spec.ComponentTypes[componentType]
+	if !ok {
+		return ""
+	}
+
+	for _, v := range ct.Versions {
+		if v.Version == version {
+			return v.Image
+		}
+	}
+
+	return ""
+}
+
+func defaultImageForComponentType(spec *corev1alpha1.ProviderSpec, componentType string) string {
+	if spec == nil {
+		return ""
+	}
+
+	ct, ok := spec.ComponentTypes[componentType]
+	if !ok {
+		return ""
+	}
+
+	for _, v := range ct.Versions {
+		if v.Default && v.Image != "" {
+			return v.Image
+		}
+	}
+
+	for _, v := range ct.Versions {
+		if v.Image != "" {
+			return v.Image
+		}
 	}
 
 	return ""
