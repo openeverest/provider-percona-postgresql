@@ -3,11 +3,27 @@ LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
+RELEASE_VERSION ?= v0.0.0-$(shell git rev-parse --short HEAD)
+RELEASE_FULLCOMMIT ?= $(shell git rev-parse HEAD)
+
 # CONTAINER_TOOL defines the container tool to be used for building images.
+# Be aware that the target commands are only tested with Docker which is
+# scaffolded by default. However, you might want to replace it to use other
+# tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
 
-# Image URL to use for building/pushing image targets
+# OpenEverest branch to use for OpenEverest CRD installation.
+OPENEVEREST_BRANCH ?= release-2.0
+
+# Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/openeverest/provider-percona-postgresql-dev:latest
+
+# Image URL for OpenEverest controller used in integration tests (must be pre-built).
+OPENEVEREST_CONTROLLER_IMG ?= ghcr.io/openeverest/openeverest-controller-dev:0.0.0
+
+# Split IMG into repository and tag for Helm values
+_IMG_REPO = $(firstword $(subst :, ,$(IMG)))
+_IMG_TAG  = $(lastword $(subst :, ,$(IMG)))
 
 # controller-gen version
 CONTROLLER_TOOLS_VERSION ?= v0.18.0
@@ -23,6 +39,12 @@ GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 
 # Helm chart directory
 CHART_DIR ?= charts/provider-percona-postgresql
+
+# k3d cluster name (must match dev/k3d_config.yaml metadata.name)
+K3D_CLUSTER_NAME ?= provider-pg-test
+
+# PG operator version used for CRD installation in CI
+PG ?= 3.0.0
 
 .PHONY: help
 help: ## Display this help.
@@ -85,12 +107,26 @@ verify: ## Verify that generated files are up-to-date (for CI).
 
 ##@ Build
 
+LD_FLAGS = -X 'github.com/openeverest/provider-percona-postgresql/cmd/provider.Version=$(RELEASE_VERSION)' \
+	-X 'github.com/openeverest/provider-percona-postgresql/cmd/provider.FullCommit=$(RELEASE_FULLCOMMIT)'
+
+.PHONY: build-helper
+build-helper: generate $(LOCALBIN) ## Build provider binary (helper).
+	go build -v -ldflags "$(LD_FLAGS)" -o bin/provider cmd/provider/main.go
+
 .PHONY: build
-build: generate ## Build provider binary.
-	go build -o bin/provider cmd/provider/main.go
+build: LD_FLAGS += -s -w
+build: build-helper ## Build provider binary.
+
+.PHONY: rc
+rc: build-helper ## Build provider RC binary.
+
+.PHONY: release
+release: LD_FLAGS += -s -w
+release: build-helper ## Build provider release binary. (Use for building release only!)
 
 .PHONY: docker-build
-docker-build: ## Build docker image.
+docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
 
 .PHONY: docker-push
@@ -99,16 +135,12 @@ docker-push: ## Push docker image.
 
 ##@ Helm
 
-.PHONY: helm-deps
-helm-deps: ## Download/update Helm chart dependencies.
-	helm dependency build $(CHART_DIR)
-
 .PHONY: helm-install
-helm-install: helm-deps ## Install the provider using Helm.
+helm-install: ## Install the provider using Helm.
 	helm install provider-percona-postgresql $(CHART_DIR) --create-namespace
 
 .PHONY: helm-upgrade
-helm-upgrade: helm-deps ## Upgrade the provider using Helm.
+helm-upgrade: ## Upgrade the provider using Helm.
 	helm upgrade provider-percona-postgresql $(CHART_DIR)
 
 .PHONY: helm-uninstall
@@ -116,29 +148,86 @@ helm-uninstall: ## Uninstall the provider using Helm.
 	helm uninstall provider-percona-postgresql
 
 .PHONY: helm-template
-helm-template: helm-deps ## Render Helm chart templates locally (dry-run).
+helm-template: ## Render Helm chart templates locally (dry-run).
 	helm template provider-percona-postgresql $(CHART_DIR)
 
 ##@ Testing
 
+.PHONY: test-unit
+test-unit: ## Run Go unit tests.
+	go test -v -race -coverprofile=coverage.out ./...
+
 .PHONY: test-integration
-test-integration: ## Run integration tests (kuttl) against a running cluster.
+test-integration: ## Run all integration tests against K8S cluster.
 	. ./test/vars.sh && kubectl kuttl test --config ./test/integration/kuttl.yaml
+
+.PHONY: test-integration-core
+test-integration-core: ## Run core integration tests.
+	. ./test/vars.sh && kubectl kuttl test --config ./test/integration/kuttl-core.yaml
+
+.PHONY: test-integration-monitoring-pmm
+test-integration-monitoring-pmm: ## Run PMM integration tests.
+	. ./test/vars.sh && kubectl kuttl test --config ./test/integration/kuttl-monitoring.yaml
+
+.PHONY: test-integration-backup
+test-integration-backup: ## Run backup integration tests.
+	. ./test/vars.sh && kubectl kuttl test --config ./test/integration/kuttl-backup.yaml
+
+.PHONY: test-integration-backup-datasource
+test-integration-backup-datasource: ## Run backup datasource integration tests.
+	. ./test/vars.sh && kubectl kuttl test --config ./test/integration/kuttl-backup.yaml --test "datasource"
+
+.PHONY: test-e2e
+test-e2e: ## Run Playwright E2E tests against a running Everest UI (http://localhost:8080).
+	cd test/e2e && npm ci && npx playwright test
+
+.PHONY: load-image
+load-image: ## Import the provider image (IMG) into the k3d cluster.
+	k3d image import ${IMG} -c ${K3D_CLUSTER_NAME}
+
+.PHONY: load-openeverest-controller-image
+load-openeverest-controller-image: ## Import the OpenEverest controller image into the k3d cluster.
+	k3d image import ${OPENEVEREST_CONTROLLER_IMG} -c ${K3D_CLUSTER_NAME}
+
+.PHONY: install-crds
+install-crds: ## Install OpenEverest and PG CRDs into the cluster.
+	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/core.openeverest.io_providers.yaml
+	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/core.openeverest.io_instances.yaml
+	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/monitoring.openeverest.io_monitoringconfigs.yaml
+	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backupclasses.yaml
+	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backups.yaml
+	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_restores.yaml
+	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backupstorages.yaml
+	curl -fsSL https://raw.githubusercontent.com/percona/percona-postgresql-operator/v$(PG_OPERATOR_VERSION)/deploy/crd.yaml \
+		| kubectl apply --server-side -f -
+
+.PHONY: deploy-provider-ci
+deploy-provider-ci: ## Deploy the provider via Helm for CI (IMG must already be imported into k3d).
+	helm repo add percona https://percona.github.io/percona-helm-charts/
+	helm dependency build $(CHART_DIR)
+	helm upgrade --install provider-percona-postgresql $(CHART_DIR) \
+		--create-namespace \
+		--namespace provider-system \
+		--set image.repository=$(_IMG_REPO) \
+		--set image.tag=$(_IMG_TAG) \
+		--set image.pullPolicy=Never \
+		--set operator.replicaCount=0 \
+		--wait --timeout 2m
 
 ##@ Local Development Cluster
 
 .PHONY: k3d-cluster-up
-k3d-cluster-up: ## Create a local k3d cluster for development.
-	$(info Creating k3d cluster for testing)
+k3d-cluster-up: ## Create a K8S cluster for testing.
+	$(info Creating K3D cluster for testing)
 	k3d cluster create --config ./dev/k3d_config.yaml
 
 .PHONY: k3d-cluster-down
-k3d-cluster-down: ## Delete the local k3d cluster.
-	$(info Destroying k3d test cluster)
+k3d-cluster-down: ## Delete the K8S test cluster.
+	$(info Destroying K3D test cluster)
 	k3d cluster delete --config ./dev/k3d_config.yaml
 
 .PHONY: k3d-cluster-reset
-k3d-cluster-reset: k3d-cluster-down k3d-cluster-up ## Reset the local k3d cluster.
+k3d-cluster-reset: k3d-cluster-down k3d-cluster-up ## Reset the K8S cluster for testing.
 
 ##@ Tilt Development
 
