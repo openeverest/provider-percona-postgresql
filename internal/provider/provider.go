@@ -244,7 +244,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 	}
 
 	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]
-	if !ok || proxy.Type == "" || proxy.Replicas == nil {
+	if !ok || proxy.Replicas == nil {
 		return fmt.Errorf("instance spec has invalid %q component; this should be caught by Validate", common.ComponentProxy)
 	}
 

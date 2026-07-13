@@ -33,15 +33,15 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen-$(CONTROLLER_TOOLS_VERSION)
 YQ_VERSION ?= v4.44.6
 YQ ?= $(LOCALBIN)/yq-$(YQ_VERSION)
 
-# golangci-lint version
-GOLANGCI_LINT_VERSION ?= v1.63.4
+# golangci-lint v2 version
+GOLANGCI_LINT_VERSION ?= v2.12.2
 GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 
 # Helm chart directory
 CHART_DIR ?= charts/provider-percona-postgresql
 
 # k3d cluster name (must match dev/k3d_config.yaml metadata.name)
-K3D_CLUSTER_NAME ?= provider-pg-test
+K3D_CLUSTER_NAME ?= provider-percona-postgresql-test
 
 # PG operator version used for CRD installation in CI
 PG ?= 3.0.0
@@ -58,7 +58,7 @@ run: generate ## Run the provider locally.
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint.
-	$(GOLANGCI_LINT) run
+	$(GOLANGCI_LINT) run --timeout=5m
 
 .PHONY: test
 test: ## Run unit tests.
@@ -258,7 +258,7 @@ $(YQ): $(LOCALBIN)
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Install golangci-lint.
 $(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and target name. Usage:
 # $(call go-install-tool,<target>,<package>,<version>)
