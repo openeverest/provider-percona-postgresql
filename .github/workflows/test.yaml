@@ -1,11 +1,12 @@
 name: Integration Tests
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  push:
-    branches:
-      - main
+#  ---- commenting out since everest v2 CRDs are not yet available in the main branch of openeverest/openeverest
+#  pull_request:
+#    types: [opened, synchronize, reopened]
+#  push:
+#    branches:
+#      - main
 
 permissions:
   contents: read
