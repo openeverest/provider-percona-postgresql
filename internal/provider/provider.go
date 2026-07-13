@@ -76,11 +76,96 @@ func (p *Provider) Validate(c *controller.Context) error {
 	l := log.FromContext(c.Context())
 	l.Info("Validating instance", "name", c.Name())
 
-	// TODO: Implement validation logic.
-	// Examples:
-	//   - Check that required components are present
-	//   - Validate storage sizes, replica counts
-	//   - Ensure version compatibility
+	providerSpec, err := c.ProviderSpec()
+	if err != nil {
+		return err
+	}
+
+	bundleComponents := map[string]string{}
+	bundleName := selectedVersionBundleName(c, providerSpec)
+	if bundleName != "" {
+		bundle, err := controller.ResolveVersionBundle(providerSpec, bundleName)
+		if err != nil {
+			return fmt.Errorf("invalid version bundle %q: %w", bundleName, err)
+		}
+		bundleComponents = bundle.Components
+	}
+
+	errs := []string{}
+
+	engine, ok := c.Instance().Spec.Components[common.ComponentEngine]
+	if !ok {
+		errs = append(errs, fmt.Sprintf("missing %q component", common.ComponentEngine))
+	} else {
+		if engine.Type != "" && engine.Type != componentTypePostgreSQL {
+			errs = append(errs, fmt.Sprintf("unsupported %q component type %q; only %q is supported", common.ComponentEngine, engine.Type, componentTypePostgreSQL))
+		}
+		if engine.Replicas == nil {
+			errs = append(errs, fmt.Sprintf("%q component replicas must be set", common.ComponentEngine))
+		} else if *engine.Replicas < 1 {
+			errs = append(errs, fmt.Sprintf("%q component replicas must be >= 1", common.ComponentEngine))
+		}
+
+		if engine.Version != "" {
+			if !componentVersionExists(providerSpec, componentTypePostgreSQL, engine.Version) {
+				errs = append(errs, fmt.Sprintf("unsupported %q component version %q", common.ComponentEngine, engine.Version))
+			} else if imageForComponentTypeVersion(providerSpec, componentTypePostgreSQL, engine.Version) == "" && engine.Image == "" {
+				errs = append(errs, fmt.Sprintf("%q component version %q has no image and %q override is empty", common.ComponentEngine, engine.Version, common.ComponentEngine))
+			}
+		}
+
+		engineVersion := engine.Version
+		if engineVersion == "" {
+			engineVersion = bundleComponents[common.ComponentEngine]
+		}
+
+		if engine.Image == "" && engineVersion == "" && defaultImageForComponentType(providerSpec, componentTypePostgreSQL) == "" {
+			errs = append(errs, "cannot resolve postgres image: set engine.image or engine.version, or configure a default postgresql image in provider versions catalog")
+		}
+	}
+
+	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]
+	if !ok {
+		errs = append(errs, fmt.Sprintf("missing %q component", common.ComponentProxy))
+	} else {
+		proxyType := proxy.Type
+		if proxyType == "" {
+			proxyType = common.ComponentTypePgbouncer
+		}
+		if proxyType != common.ComponentTypePgbouncer {
+			errs = append(errs, fmt.Sprintf("unsupported %q component type %q; only %q is supported", common.ComponentProxy, proxyType, common.ComponentTypePgbouncer))
+		}
+		if proxy.Replicas == nil {
+			errs = append(errs, fmt.Sprintf("%q component replicas must be set", common.ComponentProxy))
+		} else if *proxy.Replicas < 0 {
+			errs = append(errs, fmt.Sprintf("%q component replicas must be >= 0", common.ComponentProxy))
+		}
+
+		if proxy.Version != "" {
+			if !componentVersionExists(providerSpec, componentTypePGBouncer, proxy.Version) {
+				errs = append(errs, fmt.Sprintf("unsupported %q component version %q", common.ComponentProxy, proxy.Version))
+			} else if imageForComponentTypeVersion(providerSpec, componentTypePGBouncer, proxy.Version) == "" && proxy.Image == "" {
+				errs = append(errs, fmt.Sprintf("%q component version %q has no image and %q override is empty", common.ComponentProxy, proxy.Version, common.ComponentProxy))
+			}
+		}
+
+		proxyVersion := proxy.Version
+		if proxyVersion == "" {
+			proxyVersion = bundleComponents[common.ComponentProxy]
+		}
+		if proxy.Image == "" && proxyVersion == "" && defaultImageForComponentType(providerSpec, componentTypePGBouncer) == "" {
+			errs = append(errs, "cannot resolve pgbouncer image: set proxy.image or proxy.version, or configure a default pgbouncer image in provider versions catalog")
+		}
+	}
+
+	if defaultImageForComponentType(providerSpec, componentTypePGBackRest) == "" {
+		errs = append(errs, "cannot resolve default pgbackrest image from provider versions catalog")
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("invalid instance spec: %s", strings.Join(errs, "; "))
+	}
+
 	return nil
 }
 
@@ -366,6 +451,25 @@ func imageForComponentTypeVersion(spec *corev1alpha1.ProviderSpec, componentType
 	}
 
 	return ""
+}
+
+func componentVersionExists(spec *corev1alpha1.ProviderSpec, componentType, version string) bool {
+	if spec == nil || version == "" {
+		return false
+	}
+
+	ct, ok := spec.ComponentTypes[componentType]
+	if !ok {
+		return false
+	}
+
+	for _, v := range ct.Versions {
+		if v.Version == version {
+			return true
+		}
+	}
+
+	return false
 }
 
 func defaultImageForComponentType(spec *corev1alpha1.ProviderSpec, componentType string) string {
