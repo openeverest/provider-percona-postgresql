@@ -10,7 +10,7 @@ import (
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
-	corev1 "k8s.io/api/core/v1"
+	upstreamv1beta1 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/upstream.pgv2.percona.com/v1beta1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -306,7 +306,7 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		return controller.Restoring("restore is in progress"), nil
 	}
 
-	resizing, err := isPVCResizing(c, cluster)
+	resizing, err := isPVCResizing(cluster)
 	if err != nil {
 		return controller.Status{}, err
 	}
@@ -373,41 +373,14 @@ func isRestoreRunning(c *controller.Context) (bool, error) {
 	return false, nil
 }
 
-func isPVCResizing(c *controller.Context, cluster *pgv2.PerconaPGCluster) (bool, error) {
-	if !isConditionTrue(cluster.Status.Conditions, "PersistentVolumeResizing") {
-		return false, nil
-	}
-
-	// Work around operator lag in clearing the resize condition by verifying PVC conditions directly.
-	return verifyPVCResizingStatus(c, cluster.GetName())
-}
-
-func verifyPVCResizingStatus(c *controller.Context, instanceName string) (bool, error) {
-	pvcList := &corev1.PersistentVolumeClaimList{}
-	if err := c.List(pvcList, client.MatchingLabels{"app.kubernetes.io/instance": instanceName}); err != nil {
-		return false, fmt.Errorf("list PVCs for instance %q: %w", instanceName, err)
-	}
-
-	for i := range pvcList.Items {
-		for _, condition := range pvcList.Items[i].Status.Conditions {
-			if (condition.Type == corev1.PersistentVolumeClaimResizing ||
-				condition.Type == corev1.PersistentVolumeClaimFileSystemResizePending) &&
-				condition.Status == corev1.ConditionTrue {
-				return true, nil
-			}
+func isPVCResizing(cluster *pgv2.PerconaPGCluster) (bool, error) {
+	for _, condition := range cluster.Status.Conditions {
+		if condition.Type == upstreamv1beta1.PersistentVolumeResizing && condition.Status == metav1.ConditionTrue {
+			return true, nil
 		}
 	}
 
 	return false, nil
-}
-
-func isConditionTrue(conditions []metav1.Condition, conditionType string) bool {
-	for _, cond := range conditions {
-		if cond.Type == conditionType && cond.Status == metav1.ConditionTrue {
-			return true
-		}
-	}
-	return false
 }
 
 func parseMajorVersion(version string) (int, bool) {
