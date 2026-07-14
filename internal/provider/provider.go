@@ -112,10 +112,9 @@ func (p *Provider) Validate(c *controller.Context) error {
 		}
 
 		if engine.Version != "" {
-			if !componentVersionExists(providerSpec, componentTypePostgreSQL, engine.Version) {
-				errs = append(errs, fmt.Sprintf("unsupported %q component version %q", common.ComponentEngine, engine.Version))
-			} else if controller.GetImageForVersion(providerSpec, common.ComponentEngine, engine.Version) == "" && engine.Image == "" {
-				errs = append(errs, fmt.Sprintf("%q component version %q has no image and %q override is empty", common.ComponentEngine, engine.Version, common.ComponentEngine))
+			image := controller.GetImageForVersion(providerSpec, common.ComponentEngine, engine.Version)
+			if image == "" && engine.Image == "" {
+				errs = append(errs, fmt.Sprintf("unsupported or image-less %q component version %q and no image override is set", common.ComponentEngine, engine.Version))
 			}
 		}
 
@@ -148,10 +147,9 @@ func (p *Provider) Validate(c *controller.Context) error {
 		}
 
 		if proxy.Version != "" {
-			if !componentVersionExists(providerSpec, componentTypePGBouncer, proxy.Version) {
-				errs = append(errs, fmt.Sprintf("unsupported %q component version %q", common.ComponentProxy, proxy.Version))
-			} else if controller.GetImageForVersion(providerSpec, common.ComponentProxy, proxy.Version) == "" && proxy.Image == "" {
-				errs = append(errs, fmt.Sprintf("%q component version %q has no image and %q override is empty", common.ComponentProxy, proxy.Version, common.ComponentProxy))
+			image := controller.GetImageForVersion(providerSpec, common.ComponentProxy, proxy.Version)
+			if image == "" && proxy.Image == "" {
+				errs = append(errs, fmt.Sprintf("unsupported or image-less %q component version %q and no image override is set", common.ComponentProxy, proxy.Version))
 			}
 		}
 
@@ -411,25 +409,6 @@ func selectedVersionBundleName(c *controller.Context, spec *corev1alpha1.Provide
 		return c.Instance().Status.Version
 	}
 	return controller.GetDefaultVersionBundleName(spec)
-}
-
-func componentVersionExists(spec *corev1alpha1.ProviderSpec, componentType, version string) bool {
-	if spec == nil || version == "" {
-		return false
-	}
-
-	ct, ok := spec.ComponentTypes[componentType]
-	if !ok {
-		return false
-	}
-
-	for _, v := range ct.Versions {
-		if v.Version == version {
-			return true
-		}
-	}
-
-	return false
 }
 
 // Cleanup handles deletion of provider-managed resources.
