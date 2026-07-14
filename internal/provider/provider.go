@@ -81,10 +81,6 @@ func (p *Provider) Validate(c *controller.Context) error {
 		return err
 	}
 
-	if err := controller.ValidateProviderSpec(providerSpec); err != nil {
-		return fmt.Errorf("provider spec is invalid: %w", err)
-	}
-
 	bundleComponents := map[string]string{}
 	bundleName := selectedVersionBundleName(c, providerSpec)
 	if bundleName != "" {
