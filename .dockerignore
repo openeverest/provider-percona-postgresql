@@ -1,0 +1,7 @@
+# generated binaries
+bin/*
+!bin/provider
+# Helm chart dependencies
+charts/
+# test artifacts
+/tmp/
