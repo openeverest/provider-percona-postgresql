@@ -30,6 +30,15 @@ rules:
 - apiGroups:
   - backup.openeverest.io
   resources:
+  - backupclasses
+  - restores
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - backup.openeverest.io
+  resources:
   - backups
   verbs:
   - create
@@ -37,14 +46,6 @@ rules:
   - list
   - patch
   - update
-  - watch
-- apiGroups:
-  - backup.openeverest.io
-  resources:
-  - restores
-  verbs:
-  - get
-  - list
   - watch
 - apiGroups:
   - coordination.k8s.io
