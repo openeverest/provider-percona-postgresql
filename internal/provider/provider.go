@@ -256,6 +256,10 @@ func (p *Provider) Sync(c *controller.Context) error {
 		}
 	}
 
+	if err := applyBackupSettings(c, cluster); err != nil {
+		return err
+	}
+
 	if err := c.Apply(cluster); err != nil {
 		return err
 	}

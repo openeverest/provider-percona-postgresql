@@ -87,15 +87,15 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 
 		if !pgCluster.Spec.Backups.IsEnabled() || len(pgCluster.Spec.Backups.PGBackRest.Repos) == 0 {
 			return controller.BackupExecutionStatus{
-				State:             backupv1alpha1.BackupStateFailed,
-				Message:           "No backup repos configured on the cluster",
+				State:             backupv1alpha1.BackupStatePending,
+				Message:           "Waiting for backup repos to be configured on the cluster",
 				OperatorBackupRef: opRef,
 			}, nil
 		}
 		if !hasRepo(pgCluster, backup.Spec.StorageName) {
 			return controller.BackupExecutionStatus{
-				State:             backupv1alpha1.BackupStateFailed,
-				Message:           fmt.Sprintf("Repo %q is not configured on the cluster", backup.Spec.StorageName),
+				State:             backupv1alpha1.BackupStatePending,
+				Message:           fmt.Sprintf("Waiting for repo %q to be configured on the cluster", backup.Spec.StorageName),
 				OperatorBackupRef: opRef,
 			}, nil
 		}
