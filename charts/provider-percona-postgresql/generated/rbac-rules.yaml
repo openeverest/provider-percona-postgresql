@@ -39,6 +39,20 @@
     - update
     - watch
 - apiGroups:
+    - backup.openeverest.io
+  resources:
+    - backups/finalizers
+  verbs:
+    - update
+- apiGroups:
+    - backup.openeverest.io
+  resources:
+    - backups/status
+  verbs:
+    - get
+    - patch
+    - update
+- apiGroups:
     - coordination.k8s.io
   resources:
     - leases
