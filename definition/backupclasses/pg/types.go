@@ -16,5 +16,12 @@ type PgRestoreConfig struct{}
 
 // PgPITRConfig describes the per-storage PITR custom config exposed to
 // Instance.spec.backup.storages[].pitr.config. Add fields a provider needs
-// to fine-tune its PITR pipeline (oplog span, compression, retention, etc.).
-type PgPITRConfig struct{}
+// to fine-tune its PITR pipeline (WAL archiving settings, etc.).
+type PgPITRConfig struct {
+	// ArchiveTimeoutSeconds controls the archive_timeout parameter for WAL segment
+	// switching. PostgreSQL will force a WAL segment switch after this many seconds
+	// of inactivity, ensuring WAL files are archived regularly for PITR.
+	// +kubebuilder:default=60
+	// +kubebuilder:validation:Minimum=1
+	ArchiveTimeoutSeconds *float64 `json:"archiveTimeoutSeconds,omitempty"`
+}

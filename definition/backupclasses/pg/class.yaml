@@ -19,13 +19,16 @@
 
 config:
     openAPIV3Schema: PgBackupConfig
-description: 'TODO: describe what this BackupClass does.'
-displayName: Pg Backup Class
+description: |
+  BackupClass for PostgreSQL based on Percona Operator for PostgreSQL. Backups are managed
+  by pgBackRest via the Percona PG operator; OpenEverest does not run any side-car Job for this class.
+displayName: "Percona Backup for PostgreSQL"
 executionMode: ProviderManaged
 providerManaged:
-    limits: {}
+    limits:
+      maxStorages: 4
     pitrConfigSchema: PgPITRConfig
-    supportsPITR: false
+    supportsPITR: true
 restoreConfig:
     openAPIV3Schema: PgRestoreConfig
 supportedProviders:
