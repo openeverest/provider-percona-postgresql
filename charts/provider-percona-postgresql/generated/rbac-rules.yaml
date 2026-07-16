@@ -21,6 +21,17 @@
 - apiGroups:
     - backup.openeverest.io
   resources:
+    - backups
+  verbs:
+    - create
+    - get
+    - list
+    - patch
+    - update
+    - watch
+- apiGroups:
+    - backup.openeverest.io
+  resources:
     - restores
   verbs:
     - get
@@ -73,7 +84,9 @@
 - apiGroups:
     - pgv2.percona.com
   resources:
+    - perconapgbackups
     - perconapgclusters
+    - perconapgrestores
   verbs:
     - create
     - delete
@@ -85,12 +98,16 @@
 - apiGroups:
     - pgv2.percona.com
   resources:
+    - perconapgbackups/finalizers
     - perconapgclusters/finalizers
+    - perconapgrestores/finalizers
   verbs:
     - update
 - apiGroups:
     - pgv2.percona.com
   resources:
+    - perconapgbackups/status
     - perconapgclusters/status
+    - perconapgrestores/status
   verbs:
     - get
