@@ -4,6 +4,36 @@ An [OpenEverest](https://github.com/openeverest) provider.
 
 > **New to provider development?** See `github.com/openeverest/provider-sdk/blob/main/PROVIDER_DEVELOPMENT.md` for a complete guide.
 
+## Installation
+
+The provider chart is published as an OCI artifact to the GitHub Container
+Registry. It bundles the Percona Operator for PostgreSQL as a subchart, so a
+single install brings up both the provider and the operator.
+
+```bash
+helm install provider-percona-postgresql \
+  oci://ghcr.io/openeverest/charts/provider-percona-postgresql \
+  --version 0.1.0 \
+  --create-namespace
+```
+
+Upgrade to a newer chart version:
+
+```bash
+helm upgrade provider-percona-postgresql \
+  oci://ghcr.io/openeverest/charts/provider-percona-postgresql \
+  --version 0.1.0
+```
+
+Uninstall:
+
+```bash
+helm uninstall provider-percona-postgresql
+```
+
+> Browse available versions on the
+> [chart package page](https://github.com/openeverest/provider-percona-postgresql/pkgs/container/charts%2Fprovider-percona-postgresql).
+
 ## Prerequisites
 
 - Go 1.26+
