@@ -56,10 +56,10 @@ func (p *Provider) FieldIndexes() []controller.FieldIndex {
 			FieldPath: controller.IndexRestoreInstanceName,
 			Extractor: func(obj client.Object) []string {
 				restore, ok := obj.(*backupv1alpha1.Restore)
-				if !ok || restore.Spec.InstanceName == "" {
+				if !ok || restore.Spec.InstanceRef.Name == "" {
 					return nil
 				}
-				return []string{restore.Spec.InstanceName}
+				return []string{restore.Spec.InstanceRef.Name}
 			},
 		},
 	}
