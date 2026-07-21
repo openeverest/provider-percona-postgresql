@@ -260,6 +260,14 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
+	// Preserve backup-related fields set by the PG operator (manual backup
+	// triggers and annotations). Without this the provider would overwrite
+	// them on every reconciliation, preventing on-demand backups from ever
+	// starting.
+	if err := preserveBackupTrigger(c, cluster); err != nil {
+		return err
+	}
+
 	if err := c.Apply(cluster); err != nil {
 		return err
 	}
@@ -366,6 +374,48 @@ func isPVCResizing(cluster *pgv2.PerconaPGCluster) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// Backup-related annotations set by the Percona PG operator's backup
+// controller. We must preserve these during Sync so that on-demand backups
+// triggered via PerconaPGBackup are not cancelled by the provider
+// overwriting the cluster spec.
+var backupAnnotationKeys = []string{
+	"pgv2.percona.com/pgbackrest-backup",                  // AnnotationPGBackrestBackup
+	"pgv2.percona.com/backup-in-progress",                 // AnnotationBackupInProgress
+	"postgres-operator.crunchydata.com/pgbackrest-backup", // upstream PGBackRestBackup
+}
+
+// preserveBackupTrigger reads the existing PerconaPGCluster and copies
+// backup-related annotations and the Manual backup trigger into the
+// cluster object that is about to be applied. This prevents the provider
+// from overwriting the PG operator's backup trigger on every Sync.
+func preserveBackupTrigger(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
+	existing := &pgv2.PerconaPGCluster{}
+	if err := c.Get(existing, c.Name()); err != nil {
+		// If cluster doesn't exist yet, nothing to preserve.
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get existing PerconaPGCluster for backup trigger: %w", err)
+	}
+
+	// Preserve backup annotations.
+	for _, key := range backupAnnotationKeys {
+		if val, ok := existing.Annotations[key]; ok {
+			if cluster.Annotations == nil {
+				cluster.Annotations = make(map[string]string)
+			}
+			cluster.Annotations[key] = val
+		}
+	}
+
+	// Preserve the Manual backup trigger if one is set.
+	if existing.Spec.Backups.PGBackRest.Manual != nil {
+		cluster.Spec.Backups.PGBackRest.Manual = existing.Spec.Backups.PGBackRest.Manual
+	}
+
+	return nil
 }
 
 func parseMajorVersion(version string) (int, bool) {
