@@ -22,6 +22,7 @@
     - backup.openeverest.io
   resources:
     - backupclasses
+    - backupstorages
     - restores
   verbs:
     - get

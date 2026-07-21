@@ -92,15 +92,24 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 				OperatorBackupRef: opRef,
 			}, nil
 		}
-		if !hasRepo(pgCluster, backup.Spec.StorageName) {
+
+		// Translate OpenEverest storage name to pgBackRest repo name (repo1..repo4).
+		repoName, found := storageNameToRepoName(c, backup.Spec.StorageName)
+		if !found {
 			return controller.BackupExecutionStatus{
 				State:             backupv1alpha1.BackupStatePending,
-				Message:           fmt.Sprintf("Waiting for repo %q to be configured on the cluster", backup.Spec.StorageName),
+				Message:           fmt.Sprintf("Waiting for storage %q to be configured on the instance", backup.Spec.StorageName),
+				OperatorBackupRef: opRef,
+			}, nil
+		}
+		if !hasRepo(pgCluster, repoName) {
+			return controller.BackupExecutionStatus{
+				State:             backupv1alpha1.BackupStatePending,
+				Message:           fmt.Sprintf("Waiting for repo %q to be configured on the cluster", repoName),
 				OperatorBackupRef: opRef,
 			}, nil
 		}
 
-		repoName := backup.Spec.StorageName
 		opBackup = &pgv2.PerconaPGBackup{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      backup.Name,
