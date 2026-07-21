@@ -256,6 +256,12 @@ func (p *Provider) Sync(c *controller.Context) error {
 		}
 	}
 
+	// Automatically remove storages that have no schedules and no Backup CRs
+	// referencing them. This frees repo slots for reuse.
+	if _, err := pruneUnreferencedStorages(c); err != nil {
+		return err
+	}
+
 	if err := applyBackupSettings(c, cluster); err != nil {
 		return err
 	}

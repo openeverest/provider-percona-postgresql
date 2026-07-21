@@ -504,3 +504,57 @@ func resolveBackupBucket(storageBucket string) string {
 func (p *Provider) OperatorBackupType() client.Object {
 	return &pgv2.PerconaPGBackup{}
 }
+
+// pruneUnreferencedStorages removes storages from the Instance spec that have
+// no schedules configured AND are not referenced by any existing Backup CR.
+// This automatically frees repo slots when a storage is no longer in use.
+// Returns true if the Instance was modified (and patched).
+func pruneUnreferencedStorages(c *controller.Context) (bool, error) {
+	if c.Instance().Spec.Backup == nil || len(c.Instance().Spec.Backup.Storages) == 0 {
+		return false, nil
+	}
+
+	// List all Backup CRs for this instance.
+	backups, err := c.BackupsForInstance()
+	if err != nil {
+		return false, fmt.Errorf("list backups for storage pruning: %w", err)
+	}
+
+	// Build a set of storage names that are still referenced by at least one
+	// non-deleted Backup CR (regardless of state — even failed backups hold
+	// data on the storage that we shouldn't orphan).
+	referencedStorages := make(map[string]struct{})
+	for i := range backups {
+		if backups[i].DeletionTimestamp.IsZero() {
+			referencedStorages[backups[i].Spec.StorageName] = struct{}{}
+		}
+	}
+
+	// Filter: keep storages that have schedules OR are referenced by backups.
+	var kept []corev1alpha1.InstanceBackupStorage
+	for _, storage := range c.Instance().Spec.Backup.Storages {
+		hasSchedules := len(storage.Schedules) > 0
+		_, hasBackups := referencedStorages[storage.Name]
+		isMain := storage.Main
+		if hasSchedules || hasBackups || isMain {
+			kept = append(kept, storage)
+		}
+	}
+
+	// Nothing to prune.
+	if len(kept) == len(c.Instance().Spec.Backup.Storages) {
+		return false, nil
+	}
+
+	// Patch the Instance to remove unreferenced storages.
+	patch := c.Instance().DeepCopy()
+	patch.Spec.Backup.Storages = kept
+	if err := c.Client().Patch(c.Context(), patch, client.MergeFrom(c.Instance())); err != nil {
+		return false, fmt.Errorf("patch Instance to prune unreferenced storages: %w", err)
+	}
+
+	// Update the in-memory instance so subsequent logic uses the pruned list.
+	c.Instance().Spec.Backup.Storages = kept
+
+	return true, nil
+}

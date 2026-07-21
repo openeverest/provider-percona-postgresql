@@ -4,12 +4,16 @@ import (
 	"context"
 	"testing"
 
+	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
+	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -337,4 +341,188 @@ func TestReconcileRepoSlotMap_CannotExceedFourStorages(t *testing.T) {
 	assert.Equal(t, 2, slotMap["eu-central"], "eu-central stays repo3")
 	assert.Equal(t, 3, slotMap["ap-south"], "ap-south stays repo4")
 	assert.Equal(t, 1, slotMap["af-north"], "af-north gets the freed repo2 slot")
+}
+
+// TestPruneUnreferencedStorages_RemovesOrphanedStorage demonstrates that a
+// storage with no schedules and no Backup CRs referencing it gets automatically
+// removed from the Instance spec, freeing the repo slot for reuse.
+func TestPruneUnreferencedStorages_RemovesOrphanedStorage(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			Provider: "provider-percona-postgresql",
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				Enabled:  true,
+				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{
+					{
+						Name:       "active-storage",
+						StorageRef: corev1.LocalObjectReference{Name: "s3-bucket-1"},
+						Schedules: []corev1alpha1.InstanceBackupSchedule{
+							{Name: "nightly", Enabled: true, Cron: "0 2 * * *"},
+						},
+					},
+					{
+						Name:       "referenced-storage",
+						StorageRef: corev1.LocalObjectReference{Name: "s3-bucket-2"},
+						// No schedules, but has a Backup CR referencing it.
+					},
+					{
+						Name:       "orphaned-storage",
+						StorageRef: corev1.LocalObjectReference{Name: "s3-bucket-3"},
+						// No schedules, no backups — should be pruned.
+					},
+				},
+			},
+		},
+	}
+
+	// A backup referencing "referenced-storage".
+	backup := &backupv1alpha1.Backup{
+		ObjectMeta: metav1.ObjectMeta{Name: "backup-1", Namespace: "default"},
+		Spec: backupv1alpha1.BackupSpec{
+			InstanceName:    "my-pg",
+			BackupClassName: "pg",
+			StorageName:     "referenced-storage",
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance, backup).
+		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
+			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceName}
+		}).
+		Build()
+
+	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+
+	pruned, err := pruneUnreferencedStorages(c)
+	require.NoError(t, err)
+	assert.True(t, pruned, "should have pruned orphaned storage")
+
+	// Verify the instance now only has the active and referenced storages.
+	assert.Len(t, c.Instance().Spec.Backup.Storages, 2)
+	storageNames := make([]string, len(c.Instance().Spec.Backup.Storages))
+	for i, s := range c.Instance().Spec.Backup.Storages {
+		storageNames[i] = s.Name
+	}
+	assert.Contains(t, storageNames, "active-storage")
+	assert.Contains(t, storageNames, "referenced-storage")
+	assert.NotContains(t, storageNames, "orphaned-storage")
+}
+
+// TestPruneUnreferencedStorages_KeepsMainStorage demonstrates that a storage
+// marked as Main is never pruned, even without schedules or backups.
+func TestPruneUnreferencedStorages_KeepsMainStorage(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			Provider: "provider-percona-postgresql",
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				Enabled:  true,
+				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{
+					{
+						Name:       "main-storage",
+						StorageRef: corev1.LocalObjectReference{Name: "s3-primary"},
+						Main:       true,
+						// No schedules, no backups — but Main=true protects it.
+					},
+					{
+						Name:       "orphaned-storage",
+						StorageRef: corev1.LocalObjectReference{Name: "s3-temp"},
+						// No schedules, no backups, not main — should be pruned.
+					},
+				},
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance).
+		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
+			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceName}
+		}).
+		Build()
+
+	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+
+	pruned, err := pruneUnreferencedStorages(c)
+	require.NoError(t, err)
+	assert.True(t, pruned, "should have pruned orphaned-storage")
+
+	assert.Len(t, c.Instance().Spec.Backup.Storages, 1)
+	assert.Equal(t, "main-storage", c.Instance().Spec.Backup.Storages[0].Name)
+}
+
+// TestPruneUnreferencedStorages_NoPruneWhenAllReferenced verifies no changes
+// happen when all storages are actively referenced.
+func TestPruneUnreferencedStorages_NoPruneWhenAllReferenced(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			Provider: "provider-percona-postgresql",
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				Enabled:  true,
+				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{
+					{
+						Name:       "storage-with-schedule",
+						StorageRef: corev1.LocalObjectReference{Name: "s3-1"},
+						Schedules: []corev1alpha1.InstanceBackupSchedule{
+							{Name: "daily", Enabled: true, Cron: "0 0 * * *"},
+						},
+					},
+					{
+						Name:       "storage-with-backup",
+						StorageRef: corev1.LocalObjectReference{Name: "s3-2"},
+					},
+				},
+			},
+		},
+	}
+
+	backup := &backupv1alpha1.Backup{
+		ObjectMeta: metav1.ObjectMeta{Name: "backup-1", Namespace: "default"},
+		Spec: backupv1alpha1.BackupSpec{
+			InstanceName:    "my-pg",
+			BackupClassName: "pg",
+			StorageName:     "storage-with-backup",
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance, backup).
+		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
+			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceName}
+		}).
+		Build()
+
+	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+
+	pruned, err := pruneUnreferencedStorages(c)
+	require.NoError(t, err)
+	assert.False(t, pruned, "nothing should be pruned when all storages are referenced")
+	assert.Len(t, c.Instance().Spec.Backup.Storages, 2)
 }
