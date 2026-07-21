@@ -96,9 +96,21 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 		// Translate OpenEverest storage name to pgBackRest repo name (repo1..repo4).
 		repoName, found := storageNameToRepoName(c, backup.Spec.StorageName, pgCluster)
 		if !found {
+			// The storage isn't configured on the Instance yet. Try to auto-register it
+			// by looking up a BackupStorage resource with the same name.
+			if registered, err := autoRegisterStorage(c, backup.Spec.StorageName); err != nil {
+				return controller.BackupExecutionStatus{}, fmt.Errorf("auto-register storage %q: %w", backup.Spec.StorageName, err)
+			} else if !registered {
+				return controller.BackupExecutionStatus{
+					State:             backupv1alpha1.BackupStatePending,
+					Message:           fmt.Sprintf("Waiting for storage %q to be configured on the instance", backup.Spec.StorageName),
+					OperatorBackupRef: opRef,
+				}, nil
+			}
+			// Storage was registered — requeue to let the next Sync configure the repo.
 			return controller.BackupExecutionStatus{
 				State:             backupv1alpha1.BackupStatePending,
-				Message:           fmt.Sprintf("Waiting for storage %q to be configured on the instance", backup.Spec.StorageName),
+				Message:           fmt.Sprintf("Storage %q registered on the instance, waiting for repo configuration", backup.Spec.StorageName),
 				OperatorBackupRef: opRef,
 			}, nil
 		}

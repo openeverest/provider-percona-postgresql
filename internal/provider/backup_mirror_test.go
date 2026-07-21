@@ -526,3 +526,142 @@ func TestPruneUnreferencedStorages_NoPruneWhenAllReferenced(t *testing.T) {
 	assert.False(t, pruned, "nothing should be pruned when all storages are referenced")
 	assert.Len(t, c.Instance().Spec.Backup.Storages, 2)
 }
+
+// TestAutoRegisterStorage_RegistersNewStorage demonstrates that when a Backup CR
+// references a storage not yet on the Instance, the provider automatically adds
+// it if a BackupStorage resource with that name exists.
+func TestAutoRegisterStorage_RegistersNewStorage(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			Provider: "provider-percona-postgresql",
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				Enabled:  true,
+				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{
+					{
+						Name:       "existing-storage",
+						StorageRef: corev1.LocalObjectReference{Name: "existing-storage"},
+					},
+				},
+			},
+		},
+	}
+
+	// A BackupStorage resource exists for the new storage name.
+	backupStorage := &backupv1alpha1.BackupStorage{
+		ObjectMeta: metav1.ObjectMeta{Name: "new-storage", Namespace: "default"},
+		Spec: backupv1alpha1.BackupStorageSpec{
+			Type: backupv1alpha1.BackupStorageTypeS3,
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance, backupStorage).
+		Build()
+
+	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+
+	// Auto-register should succeed.
+	registered, err := autoRegisterStorage(c, "new-storage")
+	require.NoError(t, err)
+	assert.True(t, registered)
+
+	// Instance should now have 2 storages.
+	assert.Len(t, c.Instance().Spec.Backup.Storages, 2)
+	assert.Equal(t, "existing-storage", c.Instance().Spec.Backup.Storages[0].Name)
+	assert.Equal(t, "new-storage", c.Instance().Spec.Backup.Storages[1].Name)
+	assert.Equal(t, "new-storage", c.Instance().Spec.Backup.Storages[1].StorageRef.Name)
+}
+
+// TestAutoRegisterStorage_SkipsWhenBackupStorageNotFound verifies that
+// auto-registration does nothing when no BackupStorage resource exists.
+func TestAutoRegisterStorage_SkipsWhenBackupStorageNotFound(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			Provider: "provider-percona-postgresql",
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				Enabled:  true,
+				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{
+					{
+						Name:       "existing-storage",
+						StorageRef: corev1.LocalObjectReference{Name: "existing-storage"},
+					},
+				},
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance).
+		Build()
+
+	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+
+	// No BackupStorage named "nonexistent" → should return false without error.
+	registered, err := autoRegisterStorage(c, "nonexistent")
+	require.NoError(t, err)
+	assert.False(t, registered)
+	assert.Len(t, c.Instance().Spec.Backup.Storages, 1)
+}
+
+// TestAutoRegisterStorage_RespectsMaxRepos verifies that auto-registration
+// won't exceed the 4-repo limit.
+func TestAutoRegisterStorage_RespectsMaxRepos(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			Provider: "provider-percona-postgresql",
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				Enabled:  true,
+				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{
+					{Name: "s1", StorageRef: corev1.LocalObjectReference{Name: "s1"}},
+					{Name: "s2", StorageRef: corev1.LocalObjectReference{Name: "s2"}},
+					{Name: "s3", StorageRef: corev1.LocalObjectReference{Name: "s3"}},
+					{Name: "s4", StorageRef: corev1.LocalObjectReference{Name: "s4"}},
+				},
+			},
+		},
+	}
+
+	backupStorage := &backupv1alpha1.BackupStorage{
+		ObjectMeta: metav1.ObjectMeta{Name: "s5", Namespace: "default"},
+		Spec:       backupv1alpha1.BackupStorageSpec{Type: backupv1alpha1.BackupStorageTypeS3},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance, backupStorage).
+		Build()
+
+	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+
+	// All 4 slots full — should not register.
+	registered, err := autoRegisterStorage(c, "s5")
+	require.NoError(t, err)
+	assert.False(t, registered)
+	assert.Len(t, c.Instance().Spec.Backup.Storages, 4)
+}

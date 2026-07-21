@@ -558,3 +558,45 @@ func pruneUnreferencedStorages(c *controller.Context) (bool, error) {
 
 	return true, nil
 }
+
+// autoRegisterStorage checks if a BackupStorage resource with the given name
+// exists and, if so, adds it to the Instance's storages list. This enables
+// Backup CRs to reference storages that haven't been explicitly configured on
+// the Instance yet — the provider auto-registers them on first use.
+// Returns true if the storage was registered (Instance patched).
+func autoRegisterStorage(c *controller.Context, storageName string) (bool, error) {
+	// Verify the BackupStorage resource exists.
+	if _, err := c.BackupStorage(storageName); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("lookup BackupStorage %q: %w", storageName, err)
+	}
+
+	// Ensure the Instance has backup configured.
+	if c.Instance().Spec.Backup == nil {
+		return false, nil
+	}
+
+	// Check we haven't exceeded the max repos limit.
+	if len(c.Instance().Spec.Backup.Storages) >= maxPGBackRestRepos {
+		return false, nil
+	}
+
+	// Add the storage to the Instance.
+	newStorage := corev1alpha1.InstanceBackupStorage{
+		Name:       storageName,
+		StorageRef: corev1.LocalObjectReference{Name: storageName},
+	}
+
+	patch := c.Instance().DeepCopy()
+	patch.Spec.Backup.Storages = append(patch.Spec.Backup.Storages, newStorage)
+	if err := c.Client().Patch(c.Context(), patch, client.MergeFrom(c.Instance())); err != nil {
+		return false, fmt.Errorf("patch Instance to register storage %q: %w", storageName, err)
+	}
+
+	// Update in-memory instance.
+	c.Instance().Spec.Backup.Storages = patch.Spec.Backup.Storages
+
+	return true, nil
+}
