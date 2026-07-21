@@ -85,19 +85,12 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 			return controller.BackupExecutionStatus{}, fmt.Errorf("get PerconaPGCluster %q: %w", backup.Spec.InstanceName, err)
 		}
 
-		if !pgCluster.Spec.Backups.IsEnabled() || len(pgCluster.Spec.Backups.PGBackRest.Repos) == 0 {
-			return controller.BackupExecutionStatus{
-				State:             backupv1alpha1.BackupStatePending,
-				Message:           "Waiting for backup repos to be configured on the cluster",
-				OperatorBackupRef: opRef,
-			}, nil
-		}
-
-		// Translate OpenEverest storage name to pgBackRest repo name (repo1..repo4).
+		// Ensure the storage referenced by this backup is registered on the Instance.
+		// This must happen before checking if backups are enabled, because when all
+		// storages were pruned the provider disables backups — auto-registering the
+		// storage will trigger the next Instance Sync to re-enable them.
 		repoName, found := storageNameToRepoName(c, backup.Spec.StorageName, pgCluster)
 		if !found {
-			// The storage isn't configured on the Instance yet. Try to auto-register it
-			// by looking up a BackupStorage resource with the same name.
 			if registered, err := autoRegisterStorage(c, backup.Spec.StorageName); err != nil {
 				return controller.BackupExecutionStatus{}, fmt.Errorf("auto-register storage %q: %w", backup.Spec.StorageName, err)
 			} else if !registered {
@@ -114,6 +107,15 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 				OperatorBackupRef: opRef,
 			}, nil
 		}
+
+		if !pgCluster.Spec.Backups.IsEnabled() || len(pgCluster.Spec.Backups.PGBackRest.Repos) == 0 {
+			return controller.BackupExecutionStatus{
+				State:             backupv1alpha1.BackupStatePending,
+				Message:           "Waiting for backup repos to be configured on the cluster",
+				OperatorBackupRef: opRef,
+			}, nil
+		}
+
 		if !hasRepo(pgCluster, repoName) {
 			return controller.BackupExecutionStatus{
 				State:             backupv1alpha1.BackupStatePending,

@@ -180,9 +180,14 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 		return &controller.BackupConfigError{Reason: "NoStoragesConfigured", Message: "spec.backup.enabled=true requires at least one storage"}
 	}
 
-	// Build a stable slot assignment: read existing mapping from the annotation,
-	// preserve slots for storages that still exist, and assign free slots to new storages.
-	slotMap := loadRepoSlotMap(pgCluster)
+	// Build a stable slot assignment: read existing mapping from the annotation
+	// on the LIVE PGCluster (not the fresh in-memory one we're building), then
+	// preserve slots for storages that still exist and assign free slots to new ones.
+	existingCluster := &pgv2.PerconaPGCluster{}
+	if err := c.Get(existingCluster, c.Instance().Name); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("get existing PerconaPGCluster for slot map: %w", err)
+	}
+	slotMap := loadRepoSlotMap(existingCluster)
 	slotMap = reconcileRepoSlotMap(slotMap, c.Instance().Spec.Backup.Storages)
 
 	var repos []upstreamv1beta1.PGBackRestRepo
