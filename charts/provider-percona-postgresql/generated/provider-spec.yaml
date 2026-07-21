@@ -67,8 +67,9 @@ spec:
       components:
         engine: {}
         proxy: {}
-      configSchema:
-        type: object
+      parametersSchema:
+        openAPIV3Schema:
+          type: object
   uiSchema:
     cluster:
       sections:
