@@ -23,6 +23,9 @@ var _ controller.BackupMirror = (*Provider)(nil)
 const (
 	// pgBackrestJobTypeCron is the annotation value for scheduled backups.
 	pgBackrestJobTypeCron = "backup"
+
+	// maxPGBackRestRepos is the maximum number of repos pgBackRest supports (repo1..repo4).
+	maxPGBackRestRepos = 4
 )
 
 // Mirror implements controller.BackupMirror (optional). The runtime invokes
@@ -120,6 +123,21 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 		backupsEnabled := false
 		pgCluster.Spec.Backups.Enabled = &backupsEnabled
 		pgCluster.Spec.Backups.PGBackRest.Repos = nil
+		pgCluster.Spec.Backups.PGBackRest.Configuration = nil
+		pgCluster.Spec.Backups.PGBackRest.Global = nil
+		// Clean up all potential credential secrets.
+		for i := 0; i < maxPGBackRestRepos; i++ {
+			secretName := pgBackRestCredentialSecretName(c.Instance().Name, pgBackRestRepoName(i))
+			orphan := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      secretName,
+					Namespace: c.Instance().Namespace,
+				},
+			}
+			if err := c.Delete(orphan); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("delete credential secret %q: %w", secretName, err)
+			}
+		}
 		return nil
 	}
 
@@ -218,17 +236,30 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 
 	pgCluster.Spec.Backups.PGBackRest.Repos = repos
 
-	if len(configurations) > 0 {
-		pgCluster.Spec.Backups.PGBackRest.Configuration = configurations
-	}
+	// Replace configurations entirely so removed repos don't leave stale secret projections.
+	pgCluster.Spec.Backups.PGBackRest.Configuration = configurations
 
-	// Merge global config settings.
-	if len(globalConfig) > 0 {
-		if pgCluster.Spec.Backups.PGBackRest.Global == nil {
-			pgCluster.Spec.Backups.PGBackRest.Global = make(map[string]string)
+	// Replace global config entirely so removed repos don't leave stale entries.
+	pgCluster.Spec.Backups.PGBackRest.Global = globalConfig
+
+	// Clean up orphaned credential secrets for repos that no longer exist.
+	activeSecrets := make(map[string]struct{}, len(c.Instance().Spec.Backup.Storages))
+	for i := range c.Instance().Spec.Backup.Storages {
+		activeSecrets[pgBackRestCredentialSecretName(c.Instance().Name, pgBackRestRepoName(i))] = struct{}{}
+	}
+	for i := 0; i < maxPGBackRestRepos; i++ {
+		secretName := pgBackRestCredentialSecretName(c.Instance().Name, pgBackRestRepoName(i))
+		if _, active := activeSecrets[secretName]; active {
+			continue
 		}
-		for k, v := range globalConfig {
-			pgCluster.Spec.Backups.PGBackRest.Global[k] = v
+		orphan := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: c.Instance().Namespace,
+			},
+		}
+		if err := c.Delete(orphan); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete orphaned credential secret %q: %w", secretName, err)
 		}
 	}
 
