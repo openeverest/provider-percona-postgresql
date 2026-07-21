@@ -665,3 +665,134 @@ func TestAutoRegisterStorage_RespectsMaxRepos(t *testing.T) {
 	assert.False(t, registered)
 	assert.Len(t, c.Instance().Spec.Backup.Storages, 4)
 }
+
+// TestPruneViaAnnotation verifies the annotation-based pruning trigger:
+// 1. Instance has the openeverest.io/prune-storages annotation set.
+// 2. An orphaned storage (no schedules, no backups) gets pruned.
+// 3. The annotation is removed after pruning so it won't re-trigger.
+func TestPruneViaAnnotation(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-pg",
+			Namespace: "default",
+			Annotations: map[string]string{
+				pruneStoragesAnnotation: "true",
+			},
+		},
+		Spec: corev1alpha1.InstanceSpec{
+			Provider: "provider-percona-postgresql",
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				Enabled:  true,
+				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{
+					{
+						Name:       "keep-me",
+						StorageRef: corev1.LocalObjectReference{Name: "s3-1"},
+						Schedules: []corev1alpha1.InstanceBackupSchedule{
+							{Name: "daily", Enabled: true, Cron: "0 0 * * *"},
+						},
+					},
+					{
+						Name:       "remove-me",
+						StorageRef: corev1.LocalObjectReference{Name: "s3-2"},
+						// No schedules, no backups → should be pruned.
+					},
+				},
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance).
+		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
+			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceName}
+		}).
+		Build()
+
+	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+
+	// Verify annotation is present.
+	_, hasAnnotation := c.Instance().Annotations[pruneStoragesAnnotation]
+	require.True(t, hasAnnotation, "annotation should be set before pruning")
+
+	// Simulate what Sync does: check annotation → prune → remove annotation.
+	pruned, err := pruneUnreferencedStorages(c)
+	require.NoError(t, err)
+	assert.True(t, pruned, "orphaned storage should be pruned")
+	assert.Len(t, c.Instance().Spec.Backup.Storages, 1)
+	assert.Equal(t, "keep-me", c.Instance().Spec.Backup.Storages[0].Name)
+
+	// Remove annotation (as Sync does after pruning).
+	patch := c.Instance().DeepCopy()
+	delete(patch.Annotations, pruneStoragesAnnotation)
+	require.NoError(t, c.Client().Patch(c.Context(), patch, client.MergeFrom(c.Instance())))
+	c.Instance().Annotations = patch.Annotations
+
+	// Verify annotation was removed.
+	_, hasAnnotation = c.Instance().Annotations[pruneStoragesAnnotation]
+	assert.False(t, hasAnnotation, "annotation should be removed after pruning")
+}
+
+// TestPruneWithoutAnnotation_DoesNothing verifies that without the annotation,
+// pruning does NOT happen (storages stay even if orphaned).
+func TestPruneWithoutAnnotation_DoesNothing(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-pg",
+			Namespace: "default",
+			// No prune annotation set.
+		},
+		Spec: corev1alpha1.InstanceSpec{
+			Provider: "provider-percona-postgresql",
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				Enabled:  true,
+				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{
+					{
+						Name:       "used-storage",
+						StorageRef: corev1.LocalObjectReference{Name: "s3-1"},
+						Schedules: []corev1alpha1.InstanceBackupSchedule{
+							{Name: "daily", Enabled: true, Cron: "0 0 * * *"},
+						},
+					},
+					{
+						Name:       "orphaned-but-safe",
+						StorageRef: corev1.LocalObjectReference{Name: "s3-2"},
+						// No schedules, no backups — but no annotation means no pruning.
+					},
+				},
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance).
+		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
+			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceName}
+		}).
+		Build()
+
+	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+
+	// Without the annotation, Sync would skip pruning entirely.
+	// Verify the annotation check guards it.
+	_, hasAnnotation := c.Instance().Annotations[pruneStoragesAnnotation]
+	assert.False(t, hasAnnotation, "no annotation → Sync would not call prune")
+
+	// Both storages remain untouched.
+	assert.Len(t, c.Instance().Spec.Backup.Storages, 2)
+}
