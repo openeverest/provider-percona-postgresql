@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -26,6 +27,11 @@ const (
 
 	// maxPGBackRestRepos is the maximum number of repos pgBackRest supports (repo1..repo4).
 	maxPGBackRestRepos = 4
+
+	// repoSlotMapAnnotation stores a stable JSON mapping of storage names to
+	// repo slot indices (0-based) on the PerconaPGCluster. This prevents repo
+	// slots from shifting when storages are added or removed.
+	repoSlotMapAnnotation = "openeverest.io/repo-slot-map"
 )
 
 // Mirror implements controller.BackupMirror (optional). The runtime invokes
@@ -138,6 +144,8 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 				return fmt.Errorf("delete credential secret %q: %w", secretName, err)
 			}
 		}
+		// Clear the slot map annotation since backups are disabled.
+		delete(pgCluster.Annotations, repoSlotMapAnnotation)
 		return nil
 	}
 
@@ -172,17 +180,24 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 		return &controller.BackupConfigError{Reason: "NoStoragesConfigured", Message: "spec.backup.enabled=true requires at least one storage"}
 	}
 
+	// Build a stable slot assignment: read existing mapping from the annotation,
+	// preserve slots for storages that still exist, and assign free slots to new storages.
+	slotMap := loadRepoSlotMap(pgCluster)
+	slotMap = reconcileRepoSlotMap(slotMap, c.Instance().Spec.Backup.Storages)
+
 	var repos []upstreamv1beta1.PGBackRestRepo
 	var configurations []corev1.VolumeProjection
 	globalConfig := make(map[string]string)
-	for i, storage := range c.Instance().Spec.Backup.Storages {
+	for _, storage := range c.Instance().Spec.Backup.Storages {
 		if storage.StorageRef.Name == "" {
 			return &controller.BackupConfigError{Reason: "StorageReferenceMissing", Message: fmt.Sprintf("backup storage %q must set storageRef.name", storage.Name)}
 		}
 
-		// pgBackRest requires repo names matching ^repo[1-4].
-		// Map each storage to repo1, repo2, etc. based on index.
-		repoName := pgBackRestRepoName(i)
+		slot, ok := slotMap[storage.Name]
+		if !ok {
+			return &controller.BackupConfigError{Reason: "SlotAssignmentFailed", Message: fmt.Sprintf("no repo slot assigned for storage %q", storage.Name)}
+		}
+		repoName := pgBackRestRepoName(slot)
 
 		bs, err := c.BackupStorage(storage.StorageRef.Name)
 		if err != nil {
@@ -242,10 +257,15 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 	// Replace global config entirely so removed repos don't leave stale entries.
 	pgCluster.Spec.Backups.PGBackRest.Global = globalConfig
 
+	// Persist the stable slot map annotation.
+	saveRepoSlotMap(pgCluster, slotMap)
+
 	// Clean up orphaned credential secrets for repos that no longer exist.
 	activeSecrets := make(map[string]struct{}, len(c.Instance().Spec.Backup.Storages))
-	for i := range c.Instance().Spec.Backup.Storages {
-		activeSecrets[pgBackRestCredentialSecretName(c.Instance().Name, pgBackRestRepoName(i))] = struct{}{}
+	for _, storage := range c.Instance().Spec.Backup.Storages {
+		if slot, ok := slotMap[storage.Name]; ok {
+			activeSecrets[pgBackRestCredentialSecretName(c.Instance().Name, pgBackRestRepoName(slot))] = struct{}{}
+		}
 	}
 	for i := 0; i < maxPGBackRestRepos; i++ {
 		secretName := pgBackRestCredentialSecretName(c.Instance().Name, pgBackRestRepoName(i))
@@ -273,18 +293,94 @@ func pgBackRestRepoName(index int) string {
 }
 
 // storageNameToRepoName resolves the pgBackRest repo name (repo1..repo4) for
-// an OpenEverest storage name by looking up its index in the Instance's
-// backup storages list.
-func storageNameToRepoName(c *controller.Context, storageName string) (string, bool) {
+// an OpenEverest storage name. If a PGCluster is provided, it reads the
+// persisted slot map annotation for stable resolution; otherwise it computes
+// the mapping from the current storages list.
+func storageNameToRepoName(c *controller.Context, storageName string, pgCluster *pgv2.PerconaPGCluster) (string, bool) {
 	if c.Instance().Spec.Backup == nil {
 		return "", false
 	}
-	for i, s := range c.Instance().Spec.Backup.Storages {
-		if s.Name == storageName {
-			return pgBackRestRepoName(i), true
+	var existing repoSlotMap
+	if pgCluster != nil {
+		existing = loadRepoSlotMap(pgCluster)
+	}
+	slotMap := reconcileRepoSlotMap(existing, c.Instance().Spec.Backup.Storages)
+	slot, ok := slotMap[storageName]
+	if !ok {
+		return "", false
+	}
+	return pgBackRestRepoName(slot), true
+}
+
+// repoSlotMap maps storage names to their assigned repo slot indices (0-based).
+type repoSlotMap map[string]int
+
+// loadRepoSlotMap reads the stable slot mapping from the PGCluster annotation.
+func loadRepoSlotMap(pgCluster *pgv2.PerconaPGCluster) repoSlotMap {
+	if pgCluster.Annotations == nil {
+		return nil
+	}
+	raw := pgCluster.Annotations[repoSlotMapAnnotation]
+	if raw == "" {
+		return nil
+	}
+	var m repoSlotMap
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil
+	}
+	return m
+}
+
+// saveRepoSlotMap persists the stable slot mapping as an annotation on the PGCluster.
+func saveRepoSlotMap(pgCluster *pgv2.PerconaPGCluster, m repoSlotMap) {
+	if pgCluster.Annotations == nil {
+		pgCluster.Annotations = make(map[string]string)
+	}
+	data, _ := json.Marshal(m)
+	pgCluster.Annotations[repoSlotMapAnnotation] = string(data)
+}
+
+// reconcileRepoSlotMap takes an existing slot map (possibly nil) and the current
+// list of storages, and returns an updated map where:
+// - Existing storages keep their previously assigned slots.
+// - Removed storages are evicted (their slots become free).
+// - New storages are assigned to the lowest available free slot.
+func reconcileRepoSlotMap(existing repoSlotMap, storages []corev1alpha1.InstanceBackupStorage) repoSlotMap {
+	result := make(repoSlotMap, len(storages))
+
+	// Build a set of current storage names.
+	currentNames := make(map[string]struct{}, len(storages))
+	for _, s := range storages {
+		currentNames[s.Name] = struct{}{}
+	}
+
+	// Track which slots are occupied.
+	occupied := [maxPGBackRestRepos]bool{}
+
+	// Preserve existing assignments for storages that still exist.
+	for name, slot := range existing {
+		if _, ok := currentNames[name]; ok && slot >= 0 && slot < maxPGBackRestRepos {
+			result[name] = slot
+			occupied[slot] = true
 		}
 	}
-	return "", false
+
+	// Assign free slots to new storages (those not yet in the result).
+	for _, s := range storages {
+		if _, ok := result[s.Name]; ok {
+			continue
+		}
+		// Find the lowest free slot.
+		for slot := 0; slot < maxPGBackRestRepos; slot++ {
+			if !occupied[slot] {
+				result[s.Name] = slot
+				occupied[slot] = true
+				break
+			}
+		}
+	}
+
+	return result
 }
 
 // pgBackRestCredentialSecretName returns a deterministic name for the

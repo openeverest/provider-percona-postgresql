@@ -94,7 +94,7 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 		}
 
 		// Translate OpenEverest storage name to pgBackRest repo name (repo1..repo4).
-		repoName, found := storageNameToRepoName(c, backup.Spec.StorageName)
+		repoName, found := storageNameToRepoName(c, backup.Spec.StorageName, pgCluster)
 		if !found {
 			return controller.BackupExecutionStatus{
 				State:             backupv1alpha1.BackupStatePending,

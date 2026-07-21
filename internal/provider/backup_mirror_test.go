@@ -6,6 +6,7 @@ import (
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -124,4 +125,216 @@ func TestMirrorUsesJobTypeWhenBackupNameMissing(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, mirror)
 	require.Equal(t, "backup", mirror.Spec.ScheduleName)
+}
+
+func TestReconcileRepoSlotMap_NewStorages(t *testing.T) {
+	t.Parallel()
+
+	storages := []corev1alpha1.InstanceBackupStorage{
+		{Name: "storage-a"},
+		{Name: "storage-b"},
+		{Name: "storage-c"},
+	}
+
+	result := reconcileRepoSlotMap(nil, storages)
+
+	assert.Equal(t, 0, result["storage-a"])
+	assert.Equal(t, 1, result["storage-b"])
+	assert.Equal(t, 2, result["storage-c"])
+}
+
+func TestReconcileRepoSlotMap_RemoveMiddleStorageKeepsSlots(t *testing.T) {
+	t.Parallel()
+
+	// Simulate: originally had [a=0, b=1, c=2], now remove b.
+	existing := repoSlotMap{"storage-a": 0, "storage-b": 1, "storage-c": 2}
+	storages := []corev1alpha1.InstanceBackupStorage{
+		{Name: "storage-a"},
+		{Name: "storage-c"},
+	}
+
+	result := reconcileRepoSlotMap(existing, storages)
+
+	// a and c must keep their original slots; b's slot (1) is now free.
+	assert.Equal(t, 0, result["storage-a"])
+	assert.Equal(t, 2, result["storage-c"])
+	_, hasBSlot := result["storage-b"]
+	assert.False(t, hasBSlot)
+}
+
+func TestReconcileRepoSlotMap_AddStorageUsesFreedSlot(t *testing.T) {
+	t.Parallel()
+
+	// After removing b (slot 1), add d — it should get slot 1 (lowest free).
+	existing := repoSlotMap{"storage-a": 0, "storage-c": 2}
+	storages := []corev1alpha1.InstanceBackupStorage{
+		{Name: "storage-a"},
+		{Name: "storage-c"},
+		{Name: "storage-d"},
+	}
+
+	result := reconcileRepoSlotMap(existing, storages)
+
+	assert.Equal(t, 0, result["storage-a"])
+	assert.Equal(t, 2, result["storage-c"])
+	assert.Equal(t, 1, result["storage-d"]) // takes freed slot
+}
+
+func TestReconcileRepoSlotMap_MaxSlotsRespected(t *testing.T) {
+	t.Parallel()
+
+	storages := []corev1alpha1.InstanceBackupStorage{
+		{Name: "s1"},
+		{Name: "s2"},
+		{Name: "s3"},
+		{Name: "s4"},
+		{Name: "s5"}, // exceeds max — should not get a slot
+	}
+
+	result := reconcileRepoSlotMap(nil, storages)
+
+	assert.Equal(t, 0, result["s1"])
+	assert.Equal(t, 1, result["s2"])
+	assert.Equal(t, 2, result["s3"])
+	assert.Equal(t, 3, result["s4"])
+	_, has5 := result["s5"]
+	assert.False(t, has5)
+}
+
+func TestLoadSaveRepoSlotMap(t *testing.T) {
+	t.Parallel()
+
+	pgCluster := &pgv2.PerconaPGCluster{}
+	m := repoSlotMap{"alpha": 0, "beta": 2}
+
+	saveRepoSlotMap(pgCluster, m)
+	loaded := loadRepoSlotMap(pgCluster)
+
+	assert.Equal(t, m, loaded)
+}
+
+// TestReconcileRepoSlotMap_FullLifecycle simulates the real-world scenario of:
+// 1. Creating an instance with 3 storages → they get repo1, repo2, repo3.
+// 2. Removing the middle storage (storage-b) → storage-a stays repo1, storage-c stays repo3.
+// 3. Adding a replacement storage (storage-d) → it gets repo2 (the freed slot).
+//
+// This proves that existing storages never shift slots, which prevents pgBackRest
+// from losing track of existing backups at their original repo paths.
+func TestReconcileRepoSlotMap_FullLifecycle(t *testing.T) {
+	t.Parallel()
+
+	pgCluster := &pgv2.PerconaPGCluster{}
+
+	// Step 1: Initial creation with 3 storages.
+	storagesV1 := []corev1alpha1.InstanceBackupStorage{
+		{Name: "storage-a"},
+		{Name: "storage-b"},
+		{Name: "storage-c"},
+	}
+	slotMap := reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV1)
+	saveRepoSlotMap(pgCluster, slotMap)
+
+	assert.Equal(t, 0, slotMap["storage-a"], "storage-a should be repo1 (slot 0)")
+	assert.Equal(t, 1, slotMap["storage-b"], "storage-b should be repo2 (slot 1)")
+	assert.Equal(t, 2, slotMap["storage-c"], "storage-c should be repo3 (slot 2)")
+
+	// Verify repo names.
+	assert.Equal(t, "repo1", pgBackRestRepoName(slotMap["storage-a"]))
+	assert.Equal(t, "repo2", pgBackRestRepoName(slotMap["storage-b"]))
+	assert.Equal(t, "repo3", pgBackRestRepoName(slotMap["storage-c"]))
+
+	// Step 2: Remove storage-b. Remaining: [storage-a, storage-c].
+	storagesV2 := []corev1alpha1.InstanceBackupStorage{
+		{Name: "storage-a"},
+		{Name: "storage-c"},
+	}
+	slotMap = reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV2)
+	saveRepoSlotMap(pgCluster, slotMap)
+
+	// storage-a and storage-c MUST keep their original slots.
+	assert.Equal(t, 0, slotMap["storage-a"], "storage-a must remain at repo1 after removal")
+	assert.Equal(t, 2, slotMap["storage-c"], "storage-c must remain at repo3 after removal — NOT shift to repo2")
+	// storage-b is gone.
+	_, hasB := slotMap["storage-b"]
+	assert.False(t, hasB, "storage-b should be evicted from the slot map")
+
+	// Step 3: Add storage-d as a replacement. It should get the freed slot 1 (repo2).
+	storagesV3 := []corev1alpha1.InstanceBackupStorage{
+		{Name: "storage-a"},
+		{Name: "storage-c"},
+		{Name: "storage-d"},
+	}
+	slotMap = reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV3)
+	saveRepoSlotMap(pgCluster, slotMap)
+
+	assert.Equal(t, 0, slotMap["storage-a"], "storage-a still repo1")
+	assert.Equal(t, 2, slotMap["storage-c"], "storage-c still repo3")
+	assert.Equal(t, 1, slotMap["storage-d"], "storage-d should take the freed repo2 slot")
+
+	assert.Equal(t, "repo1", pgBackRestRepoName(slotMap["storage-a"]))
+	assert.Equal(t, "repo2", pgBackRestRepoName(slotMap["storage-d"]))
+	assert.Equal(t, "repo3", pgBackRestRepoName(slotMap["storage-c"]))
+}
+
+// TestReconcileRepoSlotMap_CannotExceedFourStorages demonstrates that pgBackRest
+// only supports repo1..repo4, so a 5th storage will not get a slot assigned.
+// The only way to add a new storage when all 4 slots are occupied is to first
+// remove an existing one to free up a slot.
+func TestReconcileRepoSlotMap_CannotExceedFourStorages(t *testing.T) {
+	t.Parallel()
+
+	pgCluster := &pgv2.PerconaPGCluster{}
+
+	// Step 1: Fill all 4 slots.
+	storagesV1 := []corev1alpha1.InstanceBackupStorage{
+		{Name: "us-east"},
+		{Name: "us-west"},
+		{Name: "eu-central"},
+		{Name: "ap-south"},
+	}
+	slotMap := reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV1)
+	saveRepoSlotMap(pgCluster, slotMap)
+
+	assert.Len(t, slotMap, 4, "all 4 slots should be occupied")
+	assert.Equal(t, "repo1", pgBackRestRepoName(slotMap["us-east"]))
+	assert.Equal(t, "repo2", pgBackRestRepoName(slotMap["us-west"]))
+	assert.Equal(t, "repo3", pgBackRestRepoName(slotMap["eu-central"]))
+	assert.Equal(t, "repo4", pgBackRestRepoName(slotMap["ap-south"]))
+
+	// Step 2: Try to add a 5th storage without removing any — it won't get a slot.
+	storagesV2 := []corev1alpha1.InstanceBackupStorage{
+		{Name: "us-east"},
+		{Name: "us-west"},
+		{Name: "eu-central"},
+		{Name: "ap-south"},
+		{Name: "af-north"}, // 5th storage — no free slot available
+	}
+	slotMap = reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV2)
+	saveRepoSlotMap(pgCluster, slotMap)
+
+	// The first 4 keep their slots.
+	assert.Equal(t, 0, slotMap["us-east"])
+	assert.Equal(t, 1, slotMap["us-west"])
+	assert.Equal(t, 2, slotMap["eu-central"])
+	assert.Equal(t, 3, slotMap["ap-south"])
+	// The 5th storage has no slot — it's simply not in the map.
+	_, has5th := slotMap["af-north"]
+	assert.False(t, has5th, "5th storage must not get a slot — pgBackRest only supports repo1..repo4")
+
+	// Step 3: Remove one storage to free a slot, then the 5th can be added.
+	storagesV3 := []corev1alpha1.InstanceBackupStorage{
+		{Name: "us-east"},
+		// us-west removed — frees repo2
+		{Name: "eu-central"},
+		{Name: "ap-south"},
+		{Name: "af-north"}, // now there's a free slot
+	}
+	slotMap = reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV3)
+	saveRepoSlotMap(pgCluster, slotMap)
+
+	assert.Len(t, slotMap, 4, "all 4 slots occupied again")
+	assert.Equal(t, 0, slotMap["us-east"], "us-east stays repo1")
+	assert.Equal(t, 2, slotMap["eu-central"], "eu-central stays repo3")
+	assert.Equal(t, 3, slotMap["ap-south"], "ap-south stays repo4")
+	assert.Equal(t, 1, slotMap["af-north"], "af-north gets the freed repo2 slot")
 }
