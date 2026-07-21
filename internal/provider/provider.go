@@ -14,6 +14,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -256,10 +257,19 @@ func (p *Provider) Sync(c *controller.Context) error {
 		}
 	}
 
-	// Automatically remove storages that have no schedules and no Backup CRs
-	// referencing them. This frees repo slots for reuse.
-	if _, err := pruneUnreferencedStorages(c); err != nil {
-		return err
+	// If the user has set the prune-storages annotation, run the pruning logic
+	// and remove the annotation so it only fires once.
+	if _, ok := c.Instance().Annotations[pruneStoragesAnnotation]; ok {
+		if _, err := pruneUnreferencedStorages(c); err != nil {
+			return err
+		}
+		// Remove the annotation to prevent re-triggering on next reconcile.
+		patch := c.Instance().DeepCopy()
+		delete(patch.Annotations, pruneStoragesAnnotation)
+		if err := c.Client().Patch(c.Context(), patch, client.MergeFrom(c.Instance())); err != nil {
+			return fmt.Errorf("remove prune-storages annotation: %w", err)
+		}
+		c.Instance().Annotations = patch.Annotations
 	}
 
 	if err := applyBackupSettings(c, cluster); err != nil {
