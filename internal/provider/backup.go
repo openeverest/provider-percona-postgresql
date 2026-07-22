@@ -225,16 +225,18 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 		Name:     restore.Name,
 	}
 
-	if restore.Spec.DataSource.BackupName == "" {
+	if restore.Spec.DataSource.Backup == nil || restore.Spec.DataSource.Backup.BackupName == "" {
 		return controller.RestoreExecutionStatus{
 			State:              backupv1alpha1.RestoreStateFailed,
-			Message:            "Restore dataSource.backupName is required",
+			Message:            "Restore dataSource.backup.backupName is required",
 			OperatorRestoreRef: opRef,
 		}, nil
 	}
 
+	backupName := restore.Spec.DataSource.Backup.BackupName
+
 	sourceBackup := &backupv1alpha1.Backup{}
-	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: restore.Spec.DataSource.BackupName}, sourceBackup); err != nil {
+	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: backupName}, sourceBackup); err != nil {
 		if apierrors.IsNotFound(err) {
 			return controller.RestoreExecutionStatus{
 				State:              backupv1alpha1.RestoreStatePending,
@@ -242,7 +244,7 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 				OperatorRestoreRef: opRef,
 			}, nil
 		}
-		return controller.RestoreExecutionStatus{}, fmt.Errorf("get source Backup %q: %w", restore.Spec.DataSource.BackupName, err)
+		return controller.RestoreExecutionStatus{}, fmt.Errorf("get source Backup %q: %w", backupName, err)
 	}
 
 	if sourceBackup.Status.State == backupv1alpha1.BackupStateFailed {
@@ -253,7 +255,7 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 		}, nil
 	}
 
-	if restore.Spec.DataSource.PITR != nil {
+	if restore.Spec.DataSource.Backup.PITR != nil {
 		if sourceBackup.Status.State != backupv1alpha1.BackupStateSucceeded {
 			return controller.RestoreExecutionStatus{
 				State:              backupv1alpha1.RestoreStatePending,
@@ -397,10 +399,10 @@ func desiredPITRRestoreOptions(
 	opBackupName string,
 	opRef *corev1.TypedLocalObjectReference,
 ) ([]string, *controller.RestoreExecutionStatus, error) {
-	pitr := restore.Spec.DataSource.PITR
-	if pitr == nil {
+	if restore.Spec.DataSource.Backup == nil || restore.Spec.DataSource.Backup.PITR == nil {
 		return nil, nil, nil
 	}
+	pitr := restore.Spec.DataSource.Backup.PITR
 
 	if pitr.Type == backupv1alpha1.PITRTypeDate && pitr.Date == nil {
 		return nil, &controller.RestoreExecutionStatus{

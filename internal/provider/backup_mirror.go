@@ -540,8 +540,7 @@ func pruneUnreferencedStorages(c *controller.Context) (bool, error) {
 	for _, storage := range c.Instance().Spec.Backup.Storages {
 		hasSchedules := len(storage.Schedules) > 0
 		_, hasBackups := referencedStorages[storage.Name]
-		isMain := storage.Main
-		if hasSchedules || hasBackups || isMain {
+		if hasSchedules || hasBackups {
 			kept = append(kept, storage)
 		}
 	}

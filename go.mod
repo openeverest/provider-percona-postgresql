@@ -3,7 +3,7 @@ module github.com/openeverest/provider-percona-postgresql
 go 1.26.2
 
 require (
-	github.com/openeverest/openeverest/v2 v2.0.0-20260514064117-72f7d8fb4820
+	github.com/openeverest/openeverest/v2 v2.0.0-dev.1.0.20260706074601-101663f7c5e1
 	github.com/percona/percona-postgresql-operator/v2 v2.9.1-0.20260522133121-1f77e9d3c184
 	github.com/stretchr/testify v1.11.1
 	k8s.io/api v0.36.0

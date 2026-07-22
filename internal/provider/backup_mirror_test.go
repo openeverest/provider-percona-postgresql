@@ -418,57 +418,6 @@ func TestPruneUnreferencedStorages_RemovesOrphanedStorage(t *testing.T) {
 	assert.NotContains(t, storageNames, "orphaned-storage")
 }
 
-// TestPruneUnreferencedStorages_KeepsMainStorage demonstrates that a storage
-// marked as Main is never pruned, even without schedules or backups.
-func TestPruneUnreferencedStorages_KeepsMainStorage(t *testing.T) {
-	t.Parallel()
-
-	scheme := runtime.NewScheme()
-	require.NoError(t, corev1alpha1.AddToScheme(scheme))
-	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
-
-	instance := &corev1alpha1.Instance{
-		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
-		Spec: corev1alpha1.InstanceSpec{
-			Provider: "provider-percona-postgresql",
-			Backup: &corev1alpha1.InstanceBackupSpec{
-				Enabled:  true,
-				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
-				Storages: []corev1alpha1.InstanceBackupStorage{
-					{
-						Name:       "main-storage",
-						StorageRef: corev1.LocalObjectReference{Name: "s3-primary"},
-						Main:       true,
-						// No schedules, no backups — but Main=true protects it.
-					},
-					{
-						Name:       "orphaned-storage",
-						StorageRef: corev1.LocalObjectReference{Name: "s3-temp"},
-						// No schedules, no backups, not main — should be pruned.
-					},
-				},
-			},
-		},
-	}
-
-	k8sClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(instance).
-		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
-			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceName}
-		}).
-		Build()
-
-	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
-
-	pruned, err := pruneUnreferencedStorages(c)
-	require.NoError(t, err)
-	assert.True(t, pruned, "should have pruned orphaned-storage")
-
-	assert.Len(t, c.Instance().Spec.Backup.Storages, 1)
-	assert.Equal(t, "main-storage", c.Instance().Spec.Backup.Storages[0].Name)
-}
-
 // TestPruneUnreferencedStorages_NoPruneWhenAllReferenced verifies no changes
 // happen when all storages are actively referenced.
 func TestPruneUnreferencedStorages_NoPruneWhenAllReferenced(t *testing.T) {
