@@ -262,8 +262,29 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
+	// applyBackupSettings may return a BackupConfigError when the backup
+	// configuration is incomplete (e.g. enabled=true but no storages). We
+	// capture this error and defer returning it until after the cluster has
+	// been applied so that the reconciler can still call Status() and update
+	// the Instance phase. The reconciler treats BackupConfigError specially
+	// by setting the BackupConfigured condition to False without marking the
+	// Instance as Failed.
+	var backupConfigErr error
 	if err := applyBackupSettings(c, cluster); err != nil {
-		return err
+		if controller.AsBackupConfigError(err) != nil {
+			backupConfigErr = err
+			// Preserve the existing cluster's backup configuration so we
+			// don't apply an inconsistent spec (e.g. enabled=true with
+			// zero repos) or accidentally wipe a previously working setup.
+			existing := &pgv2.PerconaPGCluster{}
+			if getErr := c.Get(existing, c.Name()); getErr == nil {
+				cluster.Spec.Backups = existing.Spec.Backups
+			}
+			// If the cluster doesn't exist yet, defaultSpec() already has
+			// backups disabled which is safe.
+		} else {
+			return err
+		}
 	}
 
 	// Preserve backup-related fields set by the PG operator (manual backup
@@ -278,7 +299,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
-	return nil
+	return backupConfigErr
 }
 
 // Status computes the current status of the database instance.

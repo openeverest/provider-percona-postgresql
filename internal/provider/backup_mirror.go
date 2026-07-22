@@ -551,14 +551,23 @@ func pruneUnreferencedStorages(c *controller.Context) (bool, error) {
 	}
 
 	// Patch the Instance to remove unreferenced storages.
+	// When ALL storages are pruned, also disable backups to avoid an
+	// inconsistent state (enabled=true with zero storages) that would
+	// block reconciliation with a BackupConfigError.
 	patch := c.Instance().DeepCopy()
 	patch.Spec.Backup.Storages = kept
+	if len(kept) == 0 {
+		patch.Spec.Backup.Enabled = false
+	}
 	if err := c.Client().Patch(c.Context(), patch, client.MergeFrom(c.Instance())); err != nil {
 		return false, fmt.Errorf("patch Instance to prune unreferenced storages: %w", err)
 	}
 
 	// Update the in-memory instance so subsequent logic uses the pruned list.
 	c.Instance().Spec.Backup.Storages = kept
+	if len(kept) == 0 {
+		c.Instance().Spec.Backup.Enabled = false
+	}
 
 	return true, nil
 }
