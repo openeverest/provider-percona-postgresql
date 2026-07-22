@@ -32,12 +32,6 @@ const (
 	// repo slot indices (0-based) on the PerconaPGCluster. This prevents repo
 	// slots from shifting when storages are added or removed.
 	repoSlotMapAnnotation = "openeverest.io/repo-slot-map"
-
-	// pruneStoragesAnnotation is a one-shot annotation on the Instance that
-	// triggers manual pruning of unreferenced storages on the next reconcile.
-	// After pruning, the annotation is removed automatically.
-	// Usage: kubectl annotate instance <name> openeverest.io/prune-storages=true
-	pruneStoragesAnnotation = "openeverest.io/prune-storages"
 )
 
 // Mirror implements controller.BackupMirror (optional). The runtime invokes
@@ -518,18 +512,8 @@ func (p *Provider) OperatorBackupType() client.Object {
 
 // pruneUnreferencedStorages removes storages from the Instance spec that have
 // no schedules configured AND are not referenced by any existing Backup CR.
-// This frees repo slots when a storage is no longer in use.
+// This automatically frees repo slots when a storage is no longer in use.
 // Returns true if the Instance was modified (and patched).
-//
-// NOTE: This function is NOT called automatically on every Sync. Removing a repo
-// from the PGCluster causes the Percona operator to reconfigure pgBackRest, which
-// puts the cluster into "updating"/"initializing" state and disrupts availability.
-//
-// To trigger manually, annotate the Instance:
-//
-//	kubectl annotate instance <name> openeverest.io/prune-storages=true
-//
-// The annotation is consumed (removed) after pruning completes.
 func pruneUnreferencedStorages(c *controller.Context) (bool, error) {
 	if c.Instance().Spec.Backup == nil || len(c.Instance().Spec.Backup.Storages) == 0 {
 		return false, nil
