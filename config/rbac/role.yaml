@@ -33,7 +33,6 @@ rules:
   resources:
   - backupclasses
   - backupstorages
-  - restores
   verbs:
   - get
   - list
@@ -53,16 +52,28 @@ rules:
   - backup.openeverest.io
   resources:
   - backups/finalizers
+  - restores/finalizers
   verbs:
   - update
 - apiGroups:
   - backup.openeverest.io
   resources:
   - backups/status
+  - restores/status
   verbs:
   - get
   - patch
   - update
+- apiGroups:
+  - backup.openeverest.io
+  resources:
+  - restores
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - coordination.k8s.io
   resources:
