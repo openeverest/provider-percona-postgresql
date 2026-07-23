@@ -129,6 +129,27 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 			}, nil
 		}
 
+		// Wait for the cluster to finish initializing (e.g. stanza-create)
+		// before creating the backup. When a new storage is added the operator
+		// needs to initialize the pgBackRest stanza which briefly puts the
+		// cluster into the "initializing" state. Creating a backup before this
+		// completes almost always results in a failure.
+		if pgCluster.Status.State == pgv2.AppStateInit {
+			return controller.BackupExecutionStatus{
+				State:             backupv1alpha1.BackupStatePending,
+				Message:           "Waiting for the cluster to finish initializing",
+				OperatorBackupRef: opRef,
+			}, nil
+		}
+
+		if !isStanzaCreated(pgCluster, repoName) {
+			return controller.BackupExecutionStatus{
+				State:             backupv1alpha1.BackupStatePending,
+				Message:           fmt.Sprintf("Waiting for stanza to be created for repo %q", repoName),
+				OperatorBackupRef: opRef,
+			}, nil
+		}
+
 		opBackup = &pgv2.PerconaPGBackup{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      backup.Name,
@@ -596,6 +617,22 @@ func hasRepo(pgCluster *pgv2.PerconaPGCluster, repoName string) bool {
 	for _, repo := range pgCluster.Spec.Backups.PGBackRest.Repos {
 		if repo.Name == repoName {
 			return true
+		}
+	}
+	return false
+}
+
+// isStanzaCreated checks whether the pgBackRest stanza has been created for
+// the given repo by inspecting the cluster's status. The Percona PG operator
+// sets RepoStatus.StanzaCreated to true once `pgbackrest stanza-create`
+// completes successfully.
+func isStanzaCreated(pgCluster *pgv2.PerconaPGCluster, repoName string) bool {
+	if pgCluster.Status.PGBackRest == nil {
+		return false
+	}
+	for _, repo := range pgCluster.Status.PGBackRest.Repos {
+		if repo.Name == repoName {
+			return repo.StanzaCreated
 		}
 	}
 	return false

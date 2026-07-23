@@ -604,12 +604,18 @@ func autoRegisterStorage(c *controller.Context, storageName string) (bool, error
 
 	patch := c.Instance().DeepCopy()
 	patch.Spec.Backup.Storages = append(patch.Spec.Backup.Storages, newStorage)
+	// Ensure backups are enabled so that the next Instance Sync will
+	// configure repos on the PG cluster. Without this the storage is
+	// registered but applyBackupSettings sees Enabled=false and keeps
+	// backups disabled, leaving the backup stuck in Pending forever.
+	patch.Spec.Backup.Enabled = true
 	if err := c.Client().Patch(c.Context(), patch, client.MergeFrom(c.Instance())); err != nil {
 		return false, fmt.Errorf("patch Instance to register storage %q: %w", storageName, err)
 	}
 
 	// Update in-memory instance.
 	c.Instance().Spec.Backup.Storages = patch.Spec.Backup.Storages
+	c.Instance().Spec.Backup.Enabled = true
 
 	return true, nil
 }
