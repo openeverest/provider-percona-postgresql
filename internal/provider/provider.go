@@ -295,6 +295,13 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
+	// Preserve the DataSource field set by the PG restore operator. Without
+	// this the provider would overwrite it on every reconciliation, preventing
+	// restores from ever progressing past "Starting".
+	if err := preserveRestoreDataSource(c, cluster); err != nil {
+		return err
+	}
+
 	if err := c.Apply(cluster); err != nil {
 		return err
 	}
@@ -440,6 +447,46 @@ func preserveBackupTrigger(c *controller.Context, cluster *pgv2.PerconaPGCluster
 	// Preserve the Manual backup trigger if one is set.
 	if existing.Spec.Backups.PGBackRest.Manual != nil {
 		cluster.Spec.Backups.PGBackRest.Manual = existing.Spec.Backups.PGBackRest.Manual
+	}
+
+	return nil
+}
+
+// restoreAnnotationKey is the annotation set by the Percona PG restore
+// controller on the PerconaPGCluster to signal an in-place pgBackRest restore.
+const restoreAnnotationKey = "postgres-operator.crunchydata.com/pgbackrest-restore"
+
+// preserveRestoreDataSource reads the existing PerconaPGCluster and copies
+// restore-related fields into the cluster object that is about to be applied.
+// The Percona PG restore operator sets spec.backups.pgBackRest.restore and
+// the pgbackrest-restore annotation to trigger an in-place restore; without
+// preserving these the provider would wipe them on every Sync, leaving the
+// restore stuck in "Starting".
+func preserveRestoreDataSource(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
+	existing := &pgv2.PerconaPGCluster{}
+	if err := c.Get(existing, c.Name()); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get existing PerconaPGCluster for restore state: %w", err)
+	}
+
+	// Preserve the DataSource field (used for bootstrap restores).
+	if existing.Spec.DataSource != nil {
+		cluster.Spec.DataSource = existing.Spec.DataSource
+	}
+
+	// Preserve the pgBackRest Restore field (used for in-place restores).
+	if existing.Spec.Backups.PGBackRest.Restore != nil {
+		cluster.Spec.Backups.PGBackRest.Restore = existing.Spec.Backups.PGBackRest.Restore
+	}
+
+	// Preserve the restore annotation.
+	if val, ok := existing.Annotations[restoreAnnotationKey]; ok {
+		if cluster.Annotations == nil {
+			cluster.Annotations = make(map[string]string)
+		}
+		cluster.Annotations[restoreAnnotationKey] = val
 	}
 
 	return nil
