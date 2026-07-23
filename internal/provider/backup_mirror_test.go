@@ -341,6 +341,78 @@ func TestDeriveScheduleName(t *testing.T) {
 	}
 }
 
+func TestApplyRetentionConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		repoName  string
+		schedules []corev1alpha1.InstanceBackupSchedule
+		wantKeys  map[string]string
+	}{
+		{
+			name:     "full backup with retention",
+			repoName: "repo1",
+			schedules: []corev1alpha1.InstanceBackupSchedule{
+				{Name: "full", Enabled: true, Cron: "0 2 * * *", RetentionCopies: 3},
+			},
+			wantKeys: map[string]string{
+				"repo1-retention-full":      "3",
+				"repo1-retention-full-type": "count",
+			},
+		},
+		{
+			name:     "differential backup with retention",
+			repoName: "repo2",
+			schedules: []corev1alpha1.InstanceBackupSchedule{
+				{Name: "differential", Enabled: true, Cron: "0 3 * * *", RetentionCopies: 5},
+			},
+			wantKeys: map[string]string{
+				"repo2-retention-diff": "5",
+			},
+		},
+		{
+			name:     "zero retention means no config",
+			repoName: "repo1",
+			schedules: []corev1alpha1.InstanceBackupSchedule{
+				{Name: "full", Enabled: true, Cron: "0 2 * * *", RetentionCopies: 0},
+			},
+			wantKeys: map[string]string{},
+		},
+		{
+			name:     "disabled schedule skipped",
+			repoName: "repo1",
+			schedules: []corev1alpha1.InstanceBackupSchedule{
+				{Name: "full", Enabled: false, Cron: "0 2 * * *", RetentionCopies: 3},
+			},
+			wantKeys: map[string]string{},
+		},
+		{
+			name:     "default schedule name maps to full retention",
+			repoName: "repo1",
+			schedules: []corev1alpha1.InstanceBackupSchedule{
+				{Name: "nightly", Enabled: true, Cron: "0 2 * * *", RetentionCopies: 1},
+			},
+			wantKeys: map[string]string{
+				"repo1-retention-full":      "1",
+				"repo1-retention-full-type": "count",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			globalConfig := make(map[string]string)
+			applyRetentionConfig(globalConfig, tt.repoName, tt.schedules)
+			for k, v := range tt.wantKeys {
+				assert.Equal(t, v, globalConfig[k], "key %q", k)
+			}
+			// Ensure no unexpected keys were added.
+			assert.Len(t, globalConfig, len(tt.wantKeys))
+		})
+	}
+}
+
 func TestReconcileRepoSlotMap_NewStorages(t *testing.T) {
 	t.Parallel()
 

@@ -301,6 +301,11 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 		if len(storage.Schedules) > 0 {
 			schedules := buildPGBackRestSchedules(storage.Schedules)
 			repo.BackupSchedules = schedules
+
+			// Apply retention settings from each schedule to the pgBackRest
+			// global config. pgBackRest supports per-repo retention via keys
+			// like "repo1-retention-full", "repo1-retention-diff".
+			applyRetentionConfig(globalConfig, repoName, storage.Schedules)
 		}
 
 		repos = append(repos, repo)
@@ -577,6 +582,44 @@ func buildPGBackRestSchedules(schedules []corev1alpha1.InstanceBackupSchedule) *
 		}
 	}
 	return s
+}
+
+// applyRetentionConfig sets pgBackRest retention global config keys based on
+// the RetentionCopies field of each schedule. pgBackRest supports per-repo
+// retention via global config keys:
+//
+//	repo<N>-retention-full      = number of full backups to retain
+//	repo<N>-retention-full-type = "count" (retain N most recent full backups)
+//	repo<N>-retention-diff      = number of differential backups to retain
+//
+// When RetentionCopies is 0 (unset), no retention key is emitted and pgBackRest
+// keeps all backups (its default).
+func applyRetentionConfig(globalConfig map[string]string, repoName string, schedules []corev1alpha1.InstanceBackupSchedule) {
+	for _, schedule := range schedules {
+		if !schedule.Enabled || schedule.RetentionCopies <= 0 {
+			continue
+		}
+		copies := fmt.Sprintf("%d", schedule.RetentionCopies)
+		switch strings.ToLower(schedule.Name) {
+		case "full", "":
+			globalConfig[repoName+"-retention-full"] = copies
+			globalConfig[repoName+"-retention-full-type"] = "count"
+		case "differential":
+			globalConfig[repoName+"-retention-diff"] = copies
+		case "incremental":
+			// pgBackRest does not have a separate retention key for
+			// incremental backups — incremental retention is tied to the
+			// full backup retention. Setting full retention here ensures
+			// that old incremental chains are cleaned up when the parent
+			// full backup expires.
+			globalConfig[repoName+"-retention-full"] = copies
+			globalConfig[repoName+"-retention-full-type"] = "count"
+		default:
+			// Unrecognized schedule names default to full backup type.
+			globalConfig[repoName+"-retention-full"] = copies
+			globalConfig[repoName+"-retention-full-type"] = "count"
+		}
+	}
 }
 
 func resolveBackupBucket(storageBucket string) string {
