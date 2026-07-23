@@ -18,8 +18,13 @@ import (
 )
 
 const (
-	pgBackupDeleteDataFinalizer = "percona.com/delete-backup"
-	instanceNameLabelKey        = "instanceName"
+	instanceNameLabelKey = "instanceName"
+
+	// finalizerDeleteBackupData is the finalizer the Percona PG operator
+	// sets on every PerconaPGBackup. When present during deletion, the
+	// operator purges the backup data from storage. We remove it when the
+	// OpenEverest Backup's DeletionPolicy is Retain so data is preserved.
+	finalizerDeleteBackupData = "internal.percona.com/delete-backup"
 )
 
 // Compile-time interface checks.
@@ -454,10 +459,15 @@ func desiredPITRRestoreOptions(
 }
 
 // CleanupBackup deletes the operator backup resource.
+// When the Backup's DeletionPolicy is Retain, the operator's
+// internal.percona.com/delete-backup finalizer is removed first so the
+// Percona operator skips data purging and leaves the backup data in storage.
+// When the policy is Delete (default), the finalizer is left in place so the
+// operator cleans up the data.
 // Return true only when fully deleted, false to requeue.
 func (p *Provider) CleanupBackup(c *controller.Context, backup *backupv1alpha1.Backup) (bool, error) {
 	l := log.FromContext(c.Context())
-	l.Info("Cleaning up backup", "name", backup.Name)
+	l.Info("Cleaning up backup", "name", backup.Name, "deletionPolicy", backup.Spec.DeletionPolicy)
 
 	name := backup.Name
 
@@ -468,6 +478,16 @@ func (p *Provider) CleanupBackup(c *controller.Context, backup *backupv1alpha1.B
 			return true, nil
 		}
 		return false, fmt.Errorf("get PerconaPGBackup %q: %w", name, err)
+	}
+
+	// When the user wants to retain backup data, strip the operator's
+	// delete-backup finalizer so it won't purge data from storage.
+	if backup.Spec.DeletionPolicy == backupv1alpha1.BackupDeletionPolicyRetain {
+		if controllerutil.RemoveFinalizer(opBackup, finalizerDeleteBackupData) {
+			if err := c.Client().Update(c.Context(), opBackup); err != nil {
+				return false, fmt.Errorf("remove delete-backup finalizer from PerconaPGBackup %q: %w", name, err)
+			}
+		}
 	}
 
 	if opBackup.DeletionTimestamp.IsZero() {

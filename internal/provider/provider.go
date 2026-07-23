@@ -21,6 +21,14 @@ const (
 	componentTypePostgreSQL = "postgresql"
 	componentTypePGBouncer  = "pgbouncer"
 	componentTypePGBackRest = "pgbackrest"
+
+	// Finalizers applied to the PerconaPGCluster resource to ensure proper
+	// cleanup of dependent resources when the cluster is deleted.
+	// NOTE: percona.com/delete-backups is intentionally omitted. Backup data
+	// deletion is managed per-Backup via CleanupBackup, respecting each
+	// Backup's DeletionPolicy (Delete vs Retain).
+	finalizerDeleteSSL = "percona.com/delete-ssl"
+	finalizerDeletePVC = "percona.com/delete-pvc"
 )
 
 // Compile-time check that Provider implements the required interface.
@@ -162,8 +170,8 @@ func (p *Provider) Sync(c *controller.Context) error {
 
 	meta := c.ObjectMeta(c.Name())
 	meta.Finalizers = []string{
-		"percona.com/delete-ssl",
-		"percona.com/delete-pvc",
+		finalizerDeleteSSL,
+		finalizerDeletePVC,
 	}
 	cluster := &pgv2.PerconaPGCluster{
 		ObjectMeta: meta,
