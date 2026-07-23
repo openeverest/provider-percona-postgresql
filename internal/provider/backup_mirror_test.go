@@ -17,14 +17,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestMirrorScheduledBackupByAnnotations(t *testing.T) {
+func TestMirrorScheduledBackup(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, pgv2.AddToScheme(scheme))
 
 	instance := &corev1alpha1.Instance{
-		ObjectMeta: metav1.ObjectMeta{Name: "inst-pg", Namespace: "my-special-place"},
+		ObjectMeta: metav1.ObjectMeta{Name: "inst-0hc", Namespace: "default"},
 		Spec: corev1alpha1.InstanceSpec{
 			Provider: "provider-percona-postgresql",
 			Backup: &corev1alpha1.InstanceBackupSpec{
@@ -32,30 +33,47 @@ func TestMirrorScheduledBackupByAnnotations(t *testing.T) {
 			},
 		},
 	}
-	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance).Build()
+
+	pgCluster := &pgv2.PerconaPGCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "inst-0hc",
+			Namespace: "default",
+			Annotations: map[string]string{
+				repoSlotMapAnnotation: `{"my-storage":0}`,
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance, pgCluster).Build()
 
 	repoName := "repo1"
+	// This is how the PG operator actually creates scheduled backups:
+	// - generateName is set (e.g. "inst-0hc-repo1-full-")
+	// - pgv2.percona.com/pgbackrest-backup-job-type: manual
+	// - no Backup CR owner reference
 	opBackup := &pgv2.PerconaPGBackup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "cron-inst-pg-repo1-full-20260630141710",
-			Namespace: "my-special-place",
-			UID:       "11111111-1111-1111-1111-111111111111",
+			Name:         "inst-0hc-repo1-full-p9dz9",
+			GenerateName: "inst-0hc-repo1-full-",
+			Namespace:    "default",
+			UID:          "11111111-1111-1111-1111-111111111111",
 			Annotations: map[string]string{
-				pgv2.PGBackrestAnnotationJobType:    "backup",
-				pgv2.PGBackrestAnnotationBackupName: "nightly",
+				annotationPGBackrestBackupJobType: "manual",
 			},
 		},
 		Spec: pgv2.PerconaPGBackupSpec{
-			PGCluster: "inst-pg",
+			PGCluster: "inst-0hc",
 			RepoName:  &repoName,
 		},
 	}
 
 	mirror, err := (&Provider{}).Mirror(context.Background(), k8sClient, opBackup)
 	require.NoError(t, err)
-	require.NotNil(t, mirror)
-	require.Equal(t, "nightly", mirror.Spec.ScheduleName)
-	require.Equal(t, "repo1", mirror.Spec.StorageName)
+	require.NotNil(t, mirror, "should create a Backup CR for scheduled backup")
+	require.Equal(t, "full", mirror.Spec.ScheduleName, "schedule name should be derived from backup name")
+	require.Equal(t, "my-storage", mirror.Spec.StorageName, "storage name should be resolved from slot map")
+	require.Equal(t, "inst-0hc", mirror.Spec.InstanceName)
+	require.Equal(t, "pg", mirror.Spec.BackupClassName)
 	require.Len(t, mirror.OwnerReferences, 1)
 	owner := mirror.OwnerReferences[0]
 	require.Equal(t, pgv2.GroupVersion.String(), owner.APIVersion)
@@ -69,6 +87,7 @@ func TestMirrorSkipsOnDemandBackup(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, pgv2.AddToScheme(scheme))
 
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "inst-pg", Namespace: "my-special-place"},
@@ -81,9 +100,24 @@ func TestMirrorSkipsOnDemandBackup(t *testing.T) {
 	}
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance).Build()
 
+	isController := true
 	repoName := "repo1"
+	// On-demand backup: fixed Name, controller owner ref from Backup CR, no generateName.
 	opBackup := &pgv2.PerconaPGBackup{
-		ObjectMeta: metav1.ObjectMeta{Name: "manual-backup", Namespace: "my-special-place"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "manual-backup",
+			Namespace: "my-special-place",
+			Annotations: map[string]string{
+				annotationPGBackrestBackupJobType: "manual",
+			},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: backupv1alpha1.GroupVersion.String(),
+				Kind:       "Backup",
+				Name:       "manual-backup",
+				UID:        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+				Controller: &isController,
+			}},
+		},
 		Spec: pgv2.PerconaPGBackupSpec{
 			PGCluster: "inst-pg",
 			RepoName:  &repoName,
@@ -92,14 +126,15 @@ func TestMirrorSkipsOnDemandBackup(t *testing.T) {
 
 	mirror, err := (&Provider{}).Mirror(context.Background(), k8sClient, opBackup)
 	require.NoError(t, err)
-	require.Nil(t, mirror)
+	require.Nil(t, mirror, "should skip on-demand backups owned by a Backup CR")
 }
 
-func TestMirrorUsesJobTypeWhenBackupNameMissing(t *testing.T) {
+func TestMirrorSkipsReplicaCreateBackup(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, pgv2.AddToScheme(scheme))
 
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "inst-pg", Namespace: "my-special-place"},
@@ -108,15 +143,28 @@ func TestMirrorUsesJobTypeWhenBackupNameMissing(t *testing.T) {
 			Backup:   &corev1alpha1.InstanceBackupSpec{ClassRef: corev1alpha1.BackupClassReference{Name: "pg"}},
 		},
 	}
-	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance).Build()
 
-	repoName := "repo1"
-	opBackup := &pgv2.PerconaPGBackup{
+	pgCluster := &pgv2.PerconaPGCluster{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "cron-backup",
+			Name:      "inst-pg",
 			Namespace: "my-special-place",
 			Annotations: map[string]string{
-				pgv2.PGBackrestAnnotationJobType: "backup",
+				repoSlotMapAnnotation: `{"my-storage":0}`,
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance, pgCluster).Build()
+
+	repoName := "repo1"
+	// Replica-create backup: has generateName but job-type is "replica-create".
+	opBackup := &pgv2.PerconaPGBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:         "inst-pg-backup-b4wc-4m29s",
+			GenerateName: "inst-pg-backup-b4wc-",
+			Namespace:    "my-special-place",
+			Annotations: map[string]string{
+				annotationPGBackrestBackupJobType: "replica-create",
 			},
 		},
 		Spec: pgv2.PerconaPGBackupSpec{
@@ -127,8 +175,170 @@ func TestMirrorUsesJobTypeWhenBackupNameMissing(t *testing.T) {
 
 	mirror, err := (&Provider{}).Mirror(context.Background(), k8sClient, opBackup)
 	require.NoError(t, err)
-	require.NotNil(t, mirror)
-	require.Equal(t, "backup", mirror.Spec.ScheduleName)
+	require.Nil(t, mirror, "should skip replica-create backups")
+}
+
+func TestMirrorSkipsWhenNoSlotMap(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, pgv2.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "inst-pg", Namespace: "my-special-place"},
+		Spec: corev1alpha1.InstanceSpec{
+			Provider: "provider-percona-postgresql",
+			Backup:   &corev1alpha1.InstanceBackupSpec{ClassRef: corev1alpha1.BackupClassReference{Name: "pg"}},
+		},
+	}
+
+	// PerconaPGCluster exists but has no slot map annotation.
+	pgCluster := &pgv2.PerconaPGCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "inst-pg",
+			Namespace: "my-special-place",
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance, pgCluster).Build()
+
+	repoName := "repo1"
+	opBackup := &pgv2.PerconaPGBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:         "inst-pg-repo1-full-xxxxx",
+			GenerateName: "inst-pg-repo1-full-",
+			Namespace:    "my-special-place",
+			Annotations: map[string]string{
+				annotationPGBackrestBackupJobType: "manual",
+			},
+		},
+		Spec: pgv2.PerconaPGBackupSpec{
+			PGCluster: "inst-pg",
+			RepoName:  &repoName,
+		},
+	}
+
+	mirror, err := (&Provider{}).Mirror(context.Background(), k8sClient, opBackup)
+	require.NoError(t, err)
+	require.Nil(t, mirror, "should skip mirroring when slot map cannot resolve repo to storage name")
+}
+
+// TestMirrorScheduledBackupIncremental verifies that Mirror correctly derives
+// the schedule name for different backup types (incr, diff).
+func TestMirrorScheduledBackupIncremental(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, pgv2.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "inst-0hc", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			Provider: "provider-percona-postgresql",
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+			},
+		},
+	}
+
+	pgCluster := &pgv2.PerconaPGCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "inst-0hc",
+			Namespace: "default",
+			Annotations: map[string]string{
+				repoSlotMapAnnotation: `{"bucket-1":0,"bucket-2":1}`,
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance, pgCluster).Build()
+
+	repoName := "repo2"
+	opBackup := &pgv2.PerconaPGBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:         "inst-0hc-repo2-incr-abc12",
+			GenerateName: "inst-0hc-repo2-incr-",
+			Namespace:    "default",
+			UID:          "22222222-2222-2222-2222-222222222222",
+			Annotations: map[string]string{
+				annotationPGBackrestBackupJobType: "manual",
+			},
+		},
+		Spec: pgv2.PerconaPGBackupSpec{
+			PGCluster: "inst-0hc",
+			RepoName:  &repoName,
+		},
+	}
+
+	mirror, err := (&Provider{}).Mirror(context.Background(), k8sClient, opBackup)
+	require.NoError(t, err)
+	require.NotNil(t, mirror, "should create a Backup CR for scheduled incremental backup")
+	require.Equal(t, "incr", mirror.Spec.ScheduleName, "schedule name should be 'incr'")
+	require.Equal(t, "bucket-2", mirror.Spec.StorageName, "storage name should be resolved from slot map for repo2")
+}
+
+func TestDeriveScheduleName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		backupName  string
+		clusterName string
+		repoName    string
+		want        string
+	}{
+		{
+			name:        "full backup",
+			backupName:  "inst-0hc-repo1-full-p9dz9",
+			clusterName: "inst-0hc",
+			repoName:    "repo1",
+			want:        "full",
+		},
+		{
+			name:        "incremental backup",
+			backupName:  "inst-0hc-repo1-incr-abc12",
+			clusterName: "inst-0hc",
+			repoName:    "repo1",
+			want:        "incr",
+		},
+		{
+			name:        "differential backup",
+			backupName:  "inst-0hc-repo2-diff-xyz99",
+			clusterName: "inst-0hc",
+			repoName:    "repo2",
+			want:        "diff",
+		},
+		{
+			name:        "no matching prefix",
+			backupName:  "other-backup-name",
+			clusterName: "inst-0hc",
+			repoName:    "repo1",
+			want:        "other-backup-name",
+		},
+		{
+			name:        "generated name with extra suffix",
+			backupName:  "inst-0hc-repo1-full-abcde-12345",
+			clusterName: "inst-0hc",
+			repoName:    "repo1",
+			want:        "full",
+		},
+		{
+			name:        "cronjob job name with timestamp suffix",
+			backupName:  "inst-0hc-repo1-full-28472348-p9dz9",
+			clusterName: "inst-0hc",
+			repoName:    "repo1",
+			want:        "full",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deriveScheduleName(tt.backupName, tt.clusterName, tt.repoName)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestReconcileRepoSlotMap_NewStorages(t *testing.T) {

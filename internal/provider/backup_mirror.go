@@ -22,11 +22,18 @@ import (
 var _ controller.BackupMirror = (*Provider)(nil)
 
 const (
-	// pgBackrestJobTypeCron is the annotation value for scheduled backups.
-	pgBackrestJobTypeCron = "backup"
-
 	// maxPGBackRestRepos is the maximum number of repos pgBackRest supports (repo1..repo4).
 	maxPGBackRestRepos = 4
+
+	// annotationPGBackrestBackupJobType is the annotation the PG operator sets
+	// on PerconaPGBackup CRs to indicate the backup's origin.
+	// Known values: "manual", "replica-create".
+	annotationPGBackrestBackupJobType = "pgv2.percona.com/pgbackrest-backup-job-type"
+
+	// pgBackrestJobTypeReplicaCreate is the job-type annotation value for the
+	// initial backup that the PG operator takes to bootstrap replicas. These
+	// are internal operator backups and should not be mirrored.
+	pgBackrestJobTypeReplicaCreate = "replica-create"
 
 	// repoSlotMapAnnotation stores a stable JSON mapping of storage names to
 	// repo slot indices (0-based) on the PerconaPGCluster. This prevents repo
@@ -55,12 +62,12 @@ func (p *Provider) Mirror(ctx context.Context, c client.Client, obj client.Objec
 		}
 	}
 
-	// Determine if this is a scheduled backup by checking the job-type annotation.
-	scheduleName := scheduleNameFromAnnotations(pgBackup)
-	if scheduleName == "" {
-		// Not a scheduled backup; skip mirroring.
+	// Determine if this is a scheduled backup.
+	if !isScheduledBackup(pgBackup) {
 		return nil, nil
 	}
+
+	scheduleName := scheduleNameFromBackup(pgBackup)
 
 	instance := &corev1alpha1.Instance{}
 	if err := c.Get(ctx, client.ObjectKey{Namespace: pgBackup.Namespace, Name: pgBackup.Spec.PGCluster}, instance); err != nil {
@@ -82,6 +89,17 @@ func (p *Provider) Mirror(ctx context.Context, c client.Client, obj client.Objec
 		return nil, nil
 	}
 
+	// Resolve the pgBackRest repo name (e.g. "repo1") back to the OpenEverest
+	// storage name using the slot map persisted on the PerconaPGCluster.
+	storageName, err := repoNameToStorageName(ctx, c, pgBackup.Namespace, pgBackup.Spec.PGCluster, repoName)
+	if err != nil {
+		return nil, err
+	}
+	if storageName == "" {
+		// Cannot resolve storage name; skip mirroring.
+		return nil, nil
+	}
+
 	return &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pgBackup.Name,
@@ -96,32 +114,92 @@ func (p *Provider) Mirror(ctx context.Context, c client.Client, obj client.Objec
 		Spec: backupv1alpha1.BackupSpec{
 			InstanceName:    pgBackup.Spec.PGCluster,
 			BackupClassName: instance.Spec.Backup.ClassRef.Name,
-			StorageName:     repoName,
+			StorageName:     storageName,
 			ScheduleName:    scheduleName,
 		},
 	}, nil
 }
 
-// scheduleNameFromAnnotations extracts the schedule name from PG backup annotations.
-// PG operator scheduled backups set the job-type annotation.
-func scheduleNameFromAnnotations(pgBackup *pgv2.PerconaPGBackup) string {
-	if pgBackup.Annotations == nil {
-		return ""
+// repoNameToStorageName resolves a pgBackRest repo name (e.g. "repo1") back to
+// the OpenEverest storage name by reading the slot map annotation from the
+// PerconaPGCluster resource.
+func repoNameToStorageName(ctx context.Context, c client.Client, namespace, clusterName, repoName string) (string, error) {
+	pgCluster := &pgv2.PerconaPGCluster{}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: clusterName}, pgCluster); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("get PerconaPGCluster %q for repo slot map: %w", clusterName, err)
 	}
 
-	// The PG operator uses the "percona.com/backup-job-type" annotation for scheduled backups.
-	jobType := pgBackup.Annotations[pgv2.PGBackrestAnnotationJobType]
-	if jobType == "" {
-		return ""
+	slotMap := loadRepoSlotMap(pgCluster)
+	if slotMap == nil {
+		return "", nil
 	}
 
-	// Use the backup name from the annotation as the schedule name, or derive from the backup name.
-	backupName := pgBackup.Annotations[pgv2.PGBackrestAnnotationBackupName]
-	if backupName != "" {
+	// Reverse lookup: find the storage name that maps to this repo name's slot.
+	for storageName, slot := range slotMap {
+		if pgBackRestRepoName(slot) == repoName {
+			return storageName, nil
+		}
+	}
+
+	return "", nil
+}
+
+// isScheduledBackup determines whether a PerconaPGBackup was created by the
+// PG operator for a CronJob-triggered (scheduled) backup.
+//
+// The PG operator creates PerconaPGBackup CRs for three kinds of backups:
+//  1. replica-create — internal bootstrap backup (job-type annotation = "replica-create")
+//  2. manual/on-demand — created by SyncBackup with an owner reference to a Backup CR
+//  3. scheduled (cron) — auto-created for CronJob-triggered jobs, identified by
+//     having generateName set and NOT being a replica-create backup
+//
+// On-demand backups are already filtered out by the owner-reference check in
+// Mirror() before this function is called.
+func isScheduledBackup(pgBackup *pgv2.PerconaPGBackup) bool {
+	// Skip replica-create backups — these are internal operator backups for
+	// bootstrapping replicas, not user-visible scheduled backups.
+	if pgBackup.Annotations[annotationPGBackrestBackupJobType] == pgBackrestJobTypeReplicaCreate {
+		return false
+	}
+
+	// The operator uses GenerateName when auto-creating PerconaPGBackup CRs
+	// for CronJob-triggered backups. On-demand backups (created by SyncBackup)
+	// use a fixed Name (matching the Backup CR name) and no GenerateName.
+	return pgBackup.GenerateName != ""
+}
+
+// scheduleNameFromBackup derives the schedule name from the PerconaPGBackup.
+// The PG operator names scheduled backups as "<cluster>-<repo>-<type>-<random>",
+// so we extract the backup type (e.g. "full", "incr", "diff") as the schedule name.
+func scheduleNameFromBackup(pgBackup *pgv2.PerconaPGBackup) string {
+	return deriveScheduleName(pgBackup.Name, pgBackup.Spec.PGCluster, safeDerefString(pgBackup.Spec.RepoName))
+}
+
+// deriveScheduleName extracts the backup type (schedule name) from a
+// PG-operator-generated backup name. The naming convention is:
+//
+//	<cluster>-<repo>-<type>-<random>
+//
+// For example "inst-0hc-repo1-full-p9dz9" → "full".
+// If the name doesn't match the expected pattern, the full name is returned as
+// a fallback schedule name.
+func deriveScheduleName(backupName, clusterName, repoName string) string {
+	prefix := clusterName + "-" + repoName + "-"
+	if !strings.HasPrefix(backupName, prefix) {
+		// Cannot parse; use the backup name itself as the schedule name.
 		return backupName
 	}
-
-	return jobType
+	remainder := strings.TrimPrefix(backupName, prefix)
+	// remainder is "<type>-<random>" or "<type>-<random>-<random>".
+	// Extract the type portion before the last dash-separated random suffix.
+	parts := strings.SplitN(remainder, "-", 2)
+	if len(parts) == 0 || parts[0] == "" {
+		return backupName
+	}
+	return parts[0]
 }
 
 func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster) error {
