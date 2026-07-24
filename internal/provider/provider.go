@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	upstreamv1beta1 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/upstream.pgv2.percona.com/v1beta1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -264,6 +266,23 @@ func (p *Provider) Sync(c *controller.Context) error {
 		}
 	}
 
+	// Configure the default database user for client connections. The user
+	// must NOT be a SUPERUSER because the operator's pgbouncer.get_auth()
+	// function explicitly excludes superusers and replication roles from
+	// PGBouncer authentication.
+	cluster.Spec.Users = []upstreamv1beta1.PostgresUserSpec{
+		{
+			Name:    upstreamv1beta1.PostgresIdentifier(c.Name()),
+			Options: "CREATEDB",
+			Databases: []upstreamv1beta1.PostgresIdentifier{
+				upstreamv1beta1.PostgresIdentifier(c.Name()),
+			},
+			Password: &upstreamv1beta1.PostgresPasswordSpec{
+				Type: upstreamv1beta1.PostgresPasswordTypeAlphaNumeric,
+			},
+		},
+	}
+
 	// Automatically remove storages that have no schedules and no Backup CRs
 	// referencing them. This frees repo slots for reuse.
 	if _, err := pruneUnreferencedStorages(c); err != nil {
@@ -384,11 +403,48 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		port = *cluster.Spec.Port
 	}
 
+	// Read the user secret created by the PG operator to obtain credentials.
+	// The secret follows the naming convention: <cluster-name>-pguser-<username>.
+	// The PG operator populates this secret with all connection details including
+	// properly URL-encoded URIs for both direct and PGBouncer connections.
+	var username, password, uri string
+	userSecret := &corev1.Secret{}
+	secretName := c.Name() + "-pguser-" + c.Name()
+	if err := c.Get(userSecret, secretName); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return controller.Status{}, fmt.Errorf("get user secret %q: %w", secretName, err)
+		}
+		l.Info("User secret not found, connection details will not include credentials", "secret", secretName)
+	} else {
+		username = string(userSecret.Data["user"])
+		password = string(userSecret.Data["password"])
+		// Prefer pgbouncer-uri when PGBouncer is enabled, fall back to direct uri.
+		if v := userSecret.Data["pgbouncer-uri"]; len(v) > 0 {
+			uri = string(v)
+		} else if v := userSecret.Data["uri"]; len(v) > 0 {
+			uri = string(v)
+		}
+		// Ensure the URI includes sslmode=require so that clients connect
+		// over TLS. PGBouncer is configured with SSL by the Percona PG
+		// operator and rejects plain-text connections.
+		uri = ensureSSLMode(uri)
+	}
+
+	// Use the pgbouncer-host from the secret if available (it includes the
+	// correct service FQDN for PGBouncer), otherwise fall back to cluster status.
+	host := cluster.Status.Host
+	if v := userSecret.Data["pgbouncer-host"]; len(v) > 0 {
+		host = string(v)
+	}
+
 	return controller.ReadyWithConnectionDetails(controller.ConnectionDetails{
 		Type:     "postgresql",
 		Provider: common.ProviderName,
-		Host:     cluster.Status.Host,
+		Host:     host,
 		Port:     strconv.Itoa(int(port)),
+		Username: username,
+		Password: password,
+		URI:      uri,
 	}), nil
 }
 
@@ -522,6 +578,27 @@ func selectedVersionBundleName(c *controller.Context, spec *corev1alpha1.Provide
 		return c.Instance().Status.Version
 	}
 	return controller.GetDefaultVersionBundleName(spec)
+}
+
+// ensureSSLMode appends sslmode=require to the URI query parameters if no
+// sslmode is already specified. PGBouncer deployed by the Percona PG operator
+// mandates TLS; without this parameter clients attempt a plain-text connection
+// first and get rejected with "no such user" / "SSL required".
+func ensureSSLMode(rawURI string) string {
+	if rawURI == "" {
+		return rawURI
+	}
+	parsed, err := url.Parse(rawURI)
+	if err != nil {
+		return rawURI
+	}
+	q := parsed.Query()
+	if q.Get("sslmode") != "" {
+		return rawURI
+	}
+	q.Set("sslmode", "require")
+	parsed.RawQuery = q.Encode()
+	return parsed.String()
 }
 
 // Cleanup handles deletion of provider-managed resources.
