@@ -293,8 +293,8 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 
 	opBackupName := sourceBackup.Name
 
-	// Resolve the repo name from the source backup's operator backup.
-	repoName, pending, err := resolveRestoreRepoName(c, restore, opBackupName, opRef)
+	// Resolve the repo name and backup set label from the source backup's operator backup.
+	repoName, backupSetName, pending, err := resolveRestoreRepoName(c, restore, opBackupName, opRef)
 	if err != nil {
 		return controller.RestoreExecutionStatus{}, err
 	}
@@ -309,6 +309,12 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 	}
 	if pitrPending != nil {
 		return *pitrPending, nil
+	}
+
+	// Pin the restore to the specific backup set so pgBackRest does not
+	// simply restore the latest backup in the repo.
+	if backupSetName != "" {
+		restoreOptions = append(restoreOptions, fmt.Sprintf("--set=%s", backupSetName))
 	}
 
 	opRestore := &pgv2.PerconaPGRestore{}
@@ -376,24 +382,24 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 	return out, nil
 }
 
-// resolveRestoreRepoName determines the repo name for the restore from the
-// source operator backup.
+// resolveRestoreRepoName determines the repo name and the pgBackRest backup
+// set label for the restore from the source operator backup.
 func resolveRestoreRepoName(
 	c *controller.Context,
 	restore *backupv1alpha1.Restore,
 	opBackupName string,
 	opRef *corev1.TypedLocalObjectReference,
-) (*string, *controller.RestoreExecutionStatus, error) {
+) (*string, string, *controller.RestoreExecutionStatus, error) {
 	opBackup := &pgv2.PerconaPGBackup{}
 	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: opBackupName}, opBackup); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, &controller.RestoreExecutionStatus{
+			return nil, "", &controller.RestoreExecutionStatus{
 				State:              backupv1alpha1.RestoreStatePending,
 				Message:            "Waiting for operator backup",
 				OperatorRestoreRef: opRef,
 			}, nil
 		}
-		return nil, nil, fmt.Errorf("get operator backup %q: %w", opBackupName, err)
+		return nil, "", nil, fmt.Errorf("get operator backup %q: %w", opBackupName, err)
 	}
 
 	if opBackup.Status.State == pgv2.BackupFailed {
@@ -401,21 +407,21 @@ func resolveRestoreRepoName(
 		if opBackup.Status.Error != "" {
 			message = opBackup.Status.Error
 		}
-		return nil, &controller.RestoreExecutionStatus{
+		return nil, "", &controller.RestoreExecutionStatus{
 			State:              backupv1alpha1.RestoreStateFailed,
 			Message:            message,
 			OperatorRestoreRef: opRef,
 		}, nil
 	}
 	if opBackup.Status.State != pgv2.BackupSucceeded {
-		return nil, &controller.RestoreExecutionStatus{
+		return nil, "", &controller.RestoreExecutionStatus{
 			State:              backupv1alpha1.RestoreStatePending,
 			Message:            "Waiting for operator backup to complete",
 			OperatorRestoreRef: opRef,
 		}, nil
 	}
 
-	return opBackup.Spec.RepoName, nil, nil
+	return opBackup.Spec.RepoName, opBackup.Status.BackupName, nil, nil
 }
 
 // desiredPITRRestoreOptions builds pgBackRest restore options for PITR.
