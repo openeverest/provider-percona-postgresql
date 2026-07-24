@@ -266,22 +266,10 @@ func (p *Provider) Sync(c *controller.Context) error {
 		}
 	}
 
-	// Configure the default database user for client connections. The user
-	// must NOT be a SUPERUSER because the operator's pgbouncer.get_auth()
-	// function explicitly excludes superusers and replication roles from
-	// PGBouncer authentication.
-	cluster.Spec.Users = []upstreamv1beta1.PostgresUserSpec{
-		{
-			Name:    upstreamv1beta1.PostgresIdentifier(c.Name()),
-			Options: "CREATEDB",
-			Databases: []upstreamv1beta1.PostgresIdentifier{
-				upstreamv1beta1.PostgresIdentifier(c.Name()),
-			},
-			Password: &upstreamv1beta1.PostgresPasswordSpec{
-				Type: upstreamv1beta1.PostgresPasswordTypeAlphaNumeric,
-			},
-		},
-	}
+	// We do NOT set spec.users — the Percona PG operator automatically
+	// creates a default user and database named after the cluster. The
+	// default user is not a superuser, which is required for PGBouncer
+	// authentication (pgbouncer.get_auth() excludes superusers).
 
 	// Automatically remove storages that have no schedules and no Backup CRs
 	// referencing them. This frees repo slots for reuse.
