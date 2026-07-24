@@ -34,6 +34,7 @@
     - backups
   verbs:
     - create
+    - delete
     - get
     - list
     - patch
@@ -60,6 +61,7 @@
   resources:
     - restores
   verbs:
+    - delete
     - get
     - list
     - patch
