@@ -329,6 +329,21 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
+	// Skip applying the cluster spec while a restore is actively running.
+	// The Percona restore controller and the upstream Crunchy operator need
+	// exclusive control over the cluster during the restore process (shutdown,
+	// data directory replacement, restart). Applying our desired spec during
+	// this window can conflict with their changes and cause the restore to
+	// appear successful without actually changing the data.
+	restoring, err := isRestoreRunning(c)
+	if err != nil {
+		return err
+	}
+	if restoring {
+		l.Info("Restore is in progress, skipping cluster apply", "cluster", c.Name())
+		return backupConfigErr
+	}
+
 	if err := c.Apply(cluster); err != nil {
 		return err
 	}

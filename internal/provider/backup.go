@@ -158,6 +158,7 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 			Spec: pgv2.PerconaPGBackupSpec{
 				PGCluster: backup.Spec.InstanceName,
 				RepoName:  &repoName,
+				Options:   []string{"--type=full"},
 			},
 		}
 		if err := ensureBackupControllerReference(opBackup); err != nil {
@@ -315,6 +316,14 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 	// simply restore the latest backup in the repo.
 	if backupSetName != "" {
 		restoreOptions = append(restoreOptions, fmt.Sprintf("--set=%s", backupSetName))
+	}
+
+	// When no PITR is requested, use --type=immediate so pgBackRest stops
+	// right after restoring the backup set without replaying WAL files.
+	// Without this, pgBackRest replays all available WAL and the database
+	// ends up at the latest state rather than the backup's point-in-time.
+	if restore.Spec.DataSource.Backup.PITR == nil {
+		restoreOptions = append(restoreOptions, "--type=immediate")
 	}
 
 	opRestore := &pgv2.PerconaPGRestore{}
