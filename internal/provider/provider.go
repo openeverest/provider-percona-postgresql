@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
+	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
@@ -17,7 +19,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
@@ -40,21 +44,63 @@ var _ controller.ProviderInterface = (*Provider)(nil)
 // Provider implements controller.ProviderInterface for the provider-percona-postgresql provider.
 type Provider struct {
 	controller.BaseProvider
+	client client.Client
+}
+
+// SetClient injects the Kubernetes client into the provider.
+// Must be called after reconciler.New() and before r.Start().
+func (p *Provider) SetClient(c client.Client) {
+	p.client = c
 }
 
 // New creates a new Provider instance.
 func New() *Provider {
-	return &Provider{
-		BaseProvider: controller.BaseProvider{
-			ProviderName: common.ProviderName,
-			SchemeFuncs: []func(*runtime.Scheme) error{
-				pgv2.AddToScheme,
-			},
-			WatchConfigs: []controller.WatchConfig{
-				controller.WatchOwned(&pgv2.PerconaPGCluster{}),
-			},
+	p := &Provider{}
+
+	p.BaseProvider = controller.BaseProvider{
+		ProviderName: common.ProviderName,
+		SchemeFuncs: []func(*runtime.Scheme) error{
+			pgv2.AddToScheme,
+			monitoringv1alpha1.SchemeBuilder.AddToScheme,
+		},
+		WatchConfigs: []controller.WatchConfig{
+			controller.WatchOwned(&pgv2.PerconaPGCluster{}),
+			controller.WatchExternal(
+				&monitoringv1alpha1.MonitoringConfig{},
+				handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+					if p.client == nil {
+						return nil
+					}
+
+					mc, ok := obj.(*monitoringv1alpha1.MonitoringConfig)
+					if !ok {
+						return nil
+					}
+
+					instances := &corev1alpha1.InstanceList{}
+					if err := p.client.List(ctx, instances,
+						client.InNamespace(mc.Namespace),
+						client.MatchingFields{monitoringConfigRefFieldPath: mc.Name},
+					); err != nil {
+						return nil
+					}
+
+					requests := make([]reconcile.Request, 0, len(instances.Items))
+					for i := range instances.Items {
+						instance := instances.Items[i]
+						if instance.Spec.ProviderRef.Name != p.Name() {
+							continue
+						}
+						requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&instance)})
+					}
+					return requests
+				}),
+				controller.ResourceVersionChangedPredicate,
+			),
 		},
 	}
+
+	return p
 }
 
 // FieldIndexes registers indexes required by helper queries used in status computation.
@@ -270,6 +316,10 @@ func (p *Provider) Sync(c *controller.Context) error {
 		if cluster.Spec.Proxy.PGBouncer.Image == "" {
 			return fmt.Errorf("cannot resolve default pgbouncer image from versions catalog")
 		}
+	}
+
+	if err := applyMonitoringSettings(c, cluster, providerSpec); err != nil {
+		return err
 	}
 
 	// We do NOT set spec.users — the Percona PG operator automatically
