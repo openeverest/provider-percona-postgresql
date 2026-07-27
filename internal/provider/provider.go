@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -617,8 +618,10 @@ func (p *Provider) Cleanup(c *controller.Context) error {
 	err := c.Get(cluster, c.Name())
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// Cluster is already gone; cleanup is complete.
-			return nil
+			// Cluster is gone. Delete any leftover secrets that survived the
+			// operator's finalizers due to race conditions between the Percona
+			// operator's cleanup and the upstream controller recreating them.
+			return p.deleteLeftoverSecrets(c)
 		}
 		return fmt.Errorf("get PerconaPGCluster %q: %w", c.Name(), err)
 	}
@@ -632,4 +635,30 @@ func (p *Provider) Cleanup(c *controller.Context) error {
 
 	// Keep the Instance finalizer until the managed PG CR is fully removed.
 	return controller.WaitFor("waiting for PerconaPGCluster to be deleted")
+}
+
+// deleteLeftoverSecrets removes secrets created by the PG operator that may
+// survive cluster deletion due to a race condition between the operator's
+// finalizer cleanup and the upstream Crunchy controller reconciling.
+//
+// TODO: Remove this workaround once Percona PG operator 3.1.0 is adopted,
+// which fixes the race upstream: https://perconadev.atlassian.net/browse/K8SPG-1010
+func (p *Provider) deleteLeftoverSecrets(c *controller.Context) error {
+	l := log.FromContext(c.Context())
+
+	secretList := &corev1.SecretList{}
+	if err := c.List(secretList, client.MatchingLabels{
+		"postgres-operator.crunchydata.com/cluster": c.Name(),
+	}); err != nil {
+		return fmt.Errorf("list leftover secrets for cluster %q: %w", c.Name(), err)
+	}
+
+	for i := range secretList.Items {
+		l.Info("Deleting leftover secret", "secret", secretList.Items[i].Name)
+		if err := c.Delete(&secretList.Items[i]); err != nil {
+			return fmt.Errorf("delete leftover secret %q: %w", secretList.Items[i].Name, err)
+		}
+	}
+
+	return nil
 }
