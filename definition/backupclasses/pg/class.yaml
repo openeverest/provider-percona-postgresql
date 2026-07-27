@@ -17,7 +17,7 @@
 #   ui.yaml  — free-form UI rendering hints, inlined verbatim under spec.uiSchema.
 #   types.go — Go types referenced above; OpenAPI-extracted by provider-sdk generate.
 
-config:
+parametersSchema:
     openAPIV3Schema: PgBackupConfig
 description: |
   BackupClass for PostgreSQL based on Percona Operator for PostgreSQL. Backups are managed
@@ -27,9 +27,10 @@ executionMode: ProviderManaged
 providerManaged:
     limits:
       maxStorages: 4
-    pitrConfigSchema: PgPITRConfig
+    pitrParametersSchema:
+      openAPIV3Schema: PgPITRConfig
     supportsPITR: true
-restoreConfig:
+restoreParametersSchema:
     openAPIV3Schema: PgRestoreConfig
 supportedProviders:
     - provider-percona-postgresql

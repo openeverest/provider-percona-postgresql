@@ -59,19 +59,7 @@ func New() *Provider {
 
 // FieldIndexes registers indexes required by helper queries used in status computation.
 func (p *Provider) FieldIndexes() []controller.FieldIndex {
-	return []controller.FieldIndex{
-		{
-			Object:    &backupv1alpha1.Restore{},
-			FieldPath: controller.IndexRestoreInstanceName,
-			Extractor: func(obj client.Object) []string {
-				restore, ok := obj.(*backupv1alpha1.Restore)
-				if !ok || restore.Spec.InstanceRef.Name == "" {
-					return nil
-				}
-				return []string{restore.Spec.InstanceRef.Name}
-			},
-		},
-	}
+	return nil
 }
 
 // Validate checks if the Instance spec is valid.
