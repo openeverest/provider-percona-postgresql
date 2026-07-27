@@ -5,12 +5,12 @@ import (
 	"testing"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
+	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -27,9 +27,9 @@ func TestMirrorScheduledBackup(t *testing.T) {
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "inst-0hc", Namespace: "default"},
 		Spec: corev1alpha1.InstanceSpec{
-			Provider: "provider-percona-postgresql",
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
 			Backup: &corev1alpha1.InstanceBackupSpec{
-				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
 			},
 		},
 	}
@@ -71,9 +71,9 @@ func TestMirrorScheduledBackup(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, mirror, "should create a Backup CR for scheduled backup")
 	require.Equal(t, "full", mirror.Spec.ScheduleName, "schedule name should be derived from backup name")
-	require.Equal(t, "my-storage", mirror.Spec.StorageName, "storage name should be resolved from slot map")
-	require.Equal(t, "inst-0hc", mirror.Spec.InstanceName)
-	require.Equal(t, "pg", mirror.Spec.BackupClassName)
+	require.Equal(t, "my-storage", mirror.Spec.StorageRef.Name, "storage name should be resolved from slot map")
+	require.Equal(t, "inst-0hc", mirror.Spec.InstanceRef.Name)
+	require.Equal(t, "pg", mirror.Spec.ClassRef.Name)
 	require.Len(t, mirror.OwnerReferences, 1)
 	owner := mirror.OwnerReferences[0]
 	require.Equal(t, pgv2.GroupVersion.String(), owner.APIVersion)
@@ -92,9 +92,9 @@ func TestMirrorSkipsOnDemandBackup(t *testing.T) {
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "inst-pg", Namespace: "my-special-place"},
 		Spec: corev1alpha1.InstanceSpec{
-			Provider: "provider-percona-postgresql",
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
 			Backup: &corev1alpha1.InstanceBackupSpec{
-				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
 			},
 		},
 	}
@@ -139,8 +139,8 @@ func TestMirrorSkipsReplicaCreateBackup(t *testing.T) {
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "inst-pg", Namespace: "my-special-place"},
 		Spec: corev1alpha1.InstanceSpec{
-			Provider: "provider-percona-postgresql",
-			Backup:   &corev1alpha1.InstanceBackupSpec{ClassRef: corev1alpha1.BackupClassReference{Name: "pg"}},
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
+			Backup:      &corev1alpha1.InstanceBackupSpec{ClassRef: apicommon.ObjectRef{Name: "pg"}},
 		},
 	}
 
@@ -188,8 +188,8 @@ func TestMirrorSkipsWhenNoSlotMap(t *testing.T) {
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "inst-pg", Namespace: "my-special-place"},
 		Spec: corev1alpha1.InstanceSpec{
-			Provider: "provider-percona-postgresql",
-			Backup:   &corev1alpha1.InstanceBackupSpec{ClassRef: corev1alpha1.BackupClassReference{Name: "pg"}},
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
+			Backup:      &corev1alpha1.InstanceBackupSpec{ClassRef: apicommon.ObjectRef{Name: "pg"}},
 		},
 	}
 
@@ -236,9 +236,9 @@ func TestMirrorScheduledBackupIncremental(t *testing.T) {
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "inst-0hc", Namespace: "default"},
 		Spec: corev1alpha1.InstanceSpec{
-			Provider: "provider-percona-postgresql",
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
 			Backup: &corev1alpha1.InstanceBackupSpec{
-				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
 			},
 		},
 	}
@@ -276,7 +276,7 @@ func TestMirrorScheduledBackupIncremental(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, mirror, "should create a Backup CR for scheduled incremental backup")
 	require.Equal(t, "incr", mirror.Spec.ScheduleName, "schedule name should be 'incr'")
-	require.Equal(t, "bucket-2", mirror.Spec.StorageName, "storage name should be resolved from slot map for repo2")
+	require.Equal(t, "bucket-2", mirror.Spec.StorageRef.Name, "storage name should be resolved from slot map for repo2")
 }
 
 func TestDeriveScheduleName(t *testing.T) {
@@ -417,9 +417,9 @@ func TestReconcileRepoSlotMap_NewStorages(t *testing.T) {
 	t.Parallel()
 
 	storages := []corev1alpha1.InstanceBackupStorage{
-		{Name: "storage-a"},
-		{Name: "storage-b"},
-		{Name: "storage-c"},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-a"}},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-b"}},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-c"}},
 	}
 
 	result := reconcileRepoSlotMap(nil, storages)
@@ -435,8 +435,8 @@ func TestReconcileRepoSlotMap_RemoveMiddleStorageKeepsSlots(t *testing.T) {
 	// Simulate: originally had [a=0, b=1, c=2], now remove b.
 	existing := repoSlotMap{"storage-a": 0, "storage-b": 1, "storage-c": 2}
 	storages := []corev1alpha1.InstanceBackupStorage{
-		{Name: "storage-a"},
-		{Name: "storage-c"},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-a"}},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-c"}},
 	}
 
 	result := reconcileRepoSlotMap(existing, storages)
@@ -454,9 +454,9 @@ func TestReconcileRepoSlotMap_AddStorageUsesFreedSlot(t *testing.T) {
 	// After removing b (slot 1), add d — it should get slot 1 (lowest free).
 	existing := repoSlotMap{"storage-a": 0, "storage-c": 2}
 	storages := []corev1alpha1.InstanceBackupStorage{
-		{Name: "storage-a"},
-		{Name: "storage-c"},
-		{Name: "storage-d"},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-a"}},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-c"}},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-d"}},
 	}
 
 	result := reconcileRepoSlotMap(existing, storages)
@@ -470,11 +470,11 @@ func TestReconcileRepoSlotMap_MaxSlotsRespected(t *testing.T) {
 	t.Parallel()
 
 	storages := []corev1alpha1.InstanceBackupStorage{
-		{Name: "s1"},
-		{Name: "s2"},
-		{Name: "s3"},
-		{Name: "s4"},
-		{Name: "s5"}, // exceeds max — should not get a slot
+		{StorageRef: apicommon.ObjectRef{Name: "s1"}},
+		{StorageRef: apicommon.ObjectRef{Name: "s2"}},
+		{StorageRef: apicommon.ObjectRef{Name: "s3"}},
+		{StorageRef: apicommon.ObjectRef{Name: "s4"}},
+		{StorageRef: apicommon.ObjectRef{Name: "s5"}}, // exceeds max — should not get a slot
 	}
 
 	result := reconcileRepoSlotMap(nil, storages)
@@ -513,9 +513,9 @@ func TestReconcileRepoSlotMap_FullLifecycle(t *testing.T) {
 
 	// Step 1: Initial creation with 3 storages.
 	storagesV1 := []corev1alpha1.InstanceBackupStorage{
-		{Name: "storage-a"},
-		{Name: "storage-b"},
-		{Name: "storage-c"},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-a"}},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-b"}},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-c"}},
 	}
 	slotMap := reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV1)
 	saveRepoSlotMap(pgCluster, slotMap)
@@ -531,8 +531,8 @@ func TestReconcileRepoSlotMap_FullLifecycle(t *testing.T) {
 
 	// Step 2: Remove storage-b. Remaining: [storage-a, storage-c].
 	storagesV2 := []corev1alpha1.InstanceBackupStorage{
-		{Name: "storage-a"},
-		{Name: "storage-c"},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-a"}},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-c"}},
 	}
 	slotMap = reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV2)
 	saveRepoSlotMap(pgCluster, slotMap)
@@ -546,9 +546,9 @@ func TestReconcileRepoSlotMap_FullLifecycle(t *testing.T) {
 
 	// Step 3: Add storage-d as a replacement. It should get the freed slot 1 (repo2).
 	storagesV3 := []corev1alpha1.InstanceBackupStorage{
-		{Name: "storage-a"},
-		{Name: "storage-c"},
-		{Name: "storage-d"},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-a"}},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-c"}},
+		{StorageRef: apicommon.ObjectRef{Name: "storage-d"}},
 	}
 	slotMap = reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV3)
 	saveRepoSlotMap(pgCluster, slotMap)
@@ -573,10 +573,10 @@ func TestReconcileRepoSlotMap_CannotExceedFourStorages(t *testing.T) {
 
 	// Step 1: Fill all 4 slots.
 	storagesV1 := []corev1alpha1.InstanceBackupStorage{
-		{Name: "us-east"},
-		{Name: "us-west"},
-		{Name: "eu-central"},
-		{Name: "ap-south"},
+		{StorageRef: apicommon.ObjectRef{Name: "us-east"}},
+		{StorageRef: apicommon.ObjectRef{Name: "us-west"}},
+		{StorageRef: apicommon.ObjectRef{Name: "eu-central"}},
+		{StorageRef: apicommon.ObjectRef{Name: "ap-south"}},
 	}
 	slotMap := reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV1)
 	saveRepoSlotMap(pgCluster, slotMap)
@@ -589,11 +589,11 @@ func TestReconcileRepoSlotMap_CannotExceedFourStorages(t *testing.T) {
 
 	// Step 2: Try to add a 5th storage without removing any — it won't get a slot.
 	storagesV2 := []corev1alpha1.InstanceBackupStorage{
-		{Name: "us-east"},
-		{Name: "us-west"},
-		{Name: "eu-central"},
-		{Name: "ap-south"},
-		{Name: "af-north"}, // 5th storage — no free slot available
+		{StorageRef: apicommon.ObjectRef{Name: "us-east"}},
+		{StorageRef: apicommon.ObjectRef{Name: "us-west"}},
+		{StorageRef: apicommon.ObjectRef{Name: "eu-central"}},
+		{StorageRef: apicommon.ObjectRef{Name: "ap-south"}},
+		{StorageRef: apicommon.ObjectRef{Name: "af-north"}}, // 5th storage — no free slot available
 	}
 	slotMap = reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV2)
 	saveRepoSlotMap(pgCluster, slotMap)
@@ -609,11 +609,11 @@ func TestReconcileRepoSlotMap_CannotExceedFourStorages(t *testing.T) {
 
 	// Step 3: Remove one storage to free a slot, then the 5th can be added.
 	storagesV3 := []corev1alpha1.InstanceBackupStorage{
-		{Name: "us-east"},
+		{StorageRef: apicommon.ObjectRef{Name: "us-east"}},
 		// us-west removed — frees repo2
-		{Name: "eu-central"},
-		{Name: "ap-south"},
-		{Name: "af-north"}, // now there's a free slot
+		{StorageRef: apicommon.ObjectRef{Name: "eu-central"}},
+		{StorageRef: apicommon.ObjectRef{Name: "ap-south"}},
+		{StorageRef: apicommon.ObjectRef{Name: "af-north"}}, // now there's a free slot
 	}
 	slotMap = reconcileRepoSlotMap(loadRepoSlotMap(pgCluster), storagesV3)
 	saveRepoSlotMap(pgCluster, slotMap)
@@ -638,26 +638,23 @@ func TestPruneUnreferencedStorages_RemovesOrphanedStorage(t *testing.T) {
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
 		Spec: corev1alpha1.InstanceSpec{
-			Provider: "provider-percona-postgresql",
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
 			Backup: &corev1alpha1.InstanceBackupSpec{
 				Enabled:  true,
-				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
 				Storages: []corev1alpha1.InstanceBackupStorage{
 					{
-						Name:       "active-storage",
-						StorageRef: corev1.LocalObjectReference{Name: "s3-bucket-1"},
+						StorageRef: apicommon.ObjectRef{Name: "active-storage"},
 						Schedules: []corev1alpha1.InstanceBackupSchedule{
 							{Name: "nightly", Enabled: true, Cron: "0 2 * * *"},
 						},
 					},
 					{
-						Name:       "referenced-storage",
-						StorageRef: corev1.LocalObjectReference{Name: "s3-bucket-2"},
+						StorageRef: apicommon.ObjectRef{Name: "referenced-storage"},
 						// No schedules, but has a Backup CR referencing it.
 					},
 					{
-						Name:       "orphaned-storage",
-						StorageRef: corev1.LocalObjectReference{Name: "s3-bucket-3"},
+						StorageRef: apicommon.ObjectRef{Name: "orphaned-storage"},
 						// No schedules, no backups — should be pruned.
 					},
 				},
@@ -669,9 +666,9 @@ func TestPruneUnreferencedStorages_RemovesOrphanedStorage(t *testing.T) {
 	backup := &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: "backup-1", Namespace: "default"},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceName:    "my-pg",
-			BackupClassName: "pg",
-			StorageName:     "referenced-storage",
+			InstanceRef: apicommon.ObjectRef{Name: "my-pg"},
+			ClassRef:    apicommon.ObjectRef{Name: "pg"},
+			StorageRef:  apicommon.ObjectRef{Name: "referenced-storage"},
 		},
 	}
 
@@ -679,7 +676,7 @@ func TestPruneUnreferencedStorages_RemovesOrphanedStorage(t *testing.T) {
 		WithScheme(scheme).
 		WithObjects(instance, backup).
 		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
-			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceName}
+			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceRef.Name}
 		}).
 		Build()
 
@@ -693,7 +690,7 @@ func TestPruneUnreferencedStorages_RemovesOrphanedStorage(t *testing.T) {
 	assert.Len(t, c.Instance().Spec.Backup.Storages, 2)
 	storageNames := make([]string, len(c.Instance().Spec.Backup.Storages))
 	for i, s := range c.Instance().Spec.Backup.Storages {
-		storageNames[i] = s.Name
+		storageNames[i] = s.StorageRef.Name
 	}
 	assert.Contains(t, storageNames, "active-storage")
 	assert.Contains(t, storageNames, "referenced-storage")
@@ -712,21 +709,19 @@ func TestPruneUnreferencedStorages_NoPruneWhenAllReferenced(t *testing.T) {
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
 		Spec: corev1alpha1.InstanceSpec{
-			Provider: "provider-percona-postgresql",
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
 			Backup: &corev1alpha1.InstanceBackupSpec{
 				Enabled:  true,
-				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
 				Storages: []corev1alpha1.InstanceBackupStorage{
 					{
-						Name:       "storage-with-schedule",
-						StorageRef: corev1.LocalObjectReference{Name: "s3-1"},
+						StorageRef: apicommon.ObjectRef{Name: "storage-with-schedule"},
 						Schedules: []corev1alpha1.InstanceBackupSchedule{
 							{Name: "daily", Enabled: true, Cron: "0 0 * * *"},
 						},
 					},
 					{
-						Name:       "storage-with-backup",
-						StorageRef: corev1.LocalObjectReference{Name: "s3-2"},
+						StorageRef: apicommon.ObjectRef{Name: "storage-with-backup"},
 					},
 				},
 			},
@@ -736,9 +731,9 @@ func TestPruneUnreferencedStorages_NoPruneWhenAllReferenced(t *testing.T) {
 	backup := &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: "backup-1", Namespace: "default"},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceName:    "my-pg",
-			BackupClassName: "pg",
-			StorageName:     "storage-with-backup",
+			InstanceRef: apicommon.ObjectRef{Name: "my-pg"},
+			ClassRef:    apicommon.ObjectRef{Name: "pg"},
+			StorageRef:  apicommon.ObjectRef{Name: "storage-with-backup"},
 		},
 	}
 
@@ -746,7 +741,7 @@ func TestPruneUnreferencedStorages_NoPruneWhenAllReferenced(t *testing.T) {
 		WithScheme(scheme).
 		WithObjects(instance, backup).
 		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
-			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceName}
+			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceRef.Name}
 		}).
 		Build()
 
@@ -771,14 +766,13 @@ func TestAutoRegisterStorage_RegistersNewStorage(t *testing.T) {
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
 		Spec: corev1alpha1.InstanceSpec{
-			Provider: "provider-percona-postgresql",
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
 			Backup: &corev1alpha1.InstanceBackupSpec{
 				Enabled:  true,
-				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
 				Storages: []corev1alpha1.InstanceBackupStorage{
 					{
-						Name:       "existing-storage",
-						StorageRef: corev1.LocalObjectReference{Name: "existing-storage"},
+						StorageRef: apicommon.ObjectRef{Name: "existing-storage"},
 					},
 				},
 			},
@@ -807,8 +801,8 @@ func TestAutoRegisterStorage_RegistersNewStorage(t *testing.T) {
 
 	// Instance should now have 2 storages.
 	assert.Len(t, c.Instance().Spec.Backup.Storages, 2)
-	assert.Equal(t, "existing-storage", c.Instance().Spec.Backup.Storages[0].Name)
-	assert.Equal(t, "new-storage", c.Instance().Spec.Backup.Storages[1].Name)
+	assert.Equal(t, "existing-storage", c.Instance().Spec.Backup.Storages[0].StorageRef.Name)
+	assert.Equal(t, "new-storage", c.Instance().Spec.Backup.Storages[1].StorageRef.Name)
 	assert.Equal(t, "new-storage", c.Instance().Spec.Backup.Storages[1].StorageRef.Name)
 }
 
@@ -824,14 +818,13 @@ func TestAutoRegisterStorage_SkipsWhenBackupStorageNotFound(t *testing.T) {
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
 		Spec: corev1alpha1.InstanceSpec{
-			Provider: "provider-percona-postgresql",
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
 			Backup: &corev1alpha1.InstanceBackupSpec{
 				Enabled:  true,
-				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
 				Storages: []corev1alpha1.InstanceBackupStorage{
 					{
-						Name:       "existing-storage",
-						StorageRef: corev1.LocalObjectReference{Name: "existing-storage"},
+						StorageRef: apicommon.ObjectRef{Name: "existing-storage"},
 					},
 				},
 			},
@@ -864,15 +857,15 @@ func TestAutoRegisterStorage_RespectsMaxRepos(t *testing.T) {
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-pg", Namespace: "default"},
 		Spec: corev1alpha1.InstanceSpec{
-			Provider: "provider-percona-postgresql",
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
 			Backup: &corev1alpha1.InstanceBackupSpec{
 				Enabled:  true,
-				ClassRef: corev1alpha1.BackupClassReference{Name: "pg"},
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
 				Storages: []corev1alpha1.InstanceBackupStorage{
-					{Name: "s1", StorageRef: corev1.LocalObjectReference{Name: "s1"}},
-					{Name: "s2", StorageRef: corev1.LocalObjectReference{Name: "s2"}},
-					{Name: "s3", StorageRef: corev1.LocalObjectReference{Name: "s3"}},
-					{Name: "s4", StorageRef: corev1.LocalObjectReference{Name: "s4"}},
+					{StorageRef: apicommon.ObjectRef{Name: "s1"}},
+					{StorageRef: apicommon.ObjectRef{Name: "s2"}},
+					{StorageRef: apicommon.ObjectRef{Name: "s3"}},
+					{StorageRef: apicommon.ObjectRef{Name: "s4"}},
 				},
 			},
 		},

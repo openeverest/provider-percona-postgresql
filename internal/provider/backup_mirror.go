@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
+	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
@@ -120,10 +121,10 @@ func (p *Provider) Mirror(ctx context.Context, c client.Client, obj client.Objec
 			}},
 		},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceName:    pgBackup.Spec.PGCluster,
-			BackupClassName: instance.Spec.Backup.ClassRef.Name,
-			StorageName:     storageName,
-			ScheduleName:    scheduleName,
+			InstanceRef:  apicommon.ObjectRef{Name: pgBackup.Spec.PGCluster},
+			ClassRef:     apicommon.ObjectRef{Name: instance.Spec.Backup.ClassRef.Name},
+			StorageRef:   apicommon.ObjectRef{Name: storageName},
+			ScheduleName: scheduleName,
 		},
 	}, nil
 }
@@ -281,12 +282,12 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 	globalConfig := make(map[string]string)
 	for _, storage := range c.Instance().Spec.Backup.Storages {
 		if storage.StorageRef.Name == "" {
-			return &controller.BackupConfigError{Reason: "StorageReferenceMissing", Message: fmt.Sprintf("backup storage %q must set storageRef.name", storage.Name)}
+			return &controller.BackupConfigError{Reason: "StorageReferenceMissing", Message: fmt.Sprintf("backup storage %q must set storageRef.name", storage.StorageRef.Name)}
 		}
 
-		slot, ok := slotMap[storage.Name]
+		slot, ok := slotMap[storage.StorageRef.Name]
 		if !ok {
-			return &controller.BackupConfigError{Reason: "SlotAssignmentFailed", Message: fmt.Sprintf("no repo slot assigned for storage %q", storage.Name)}
+			return &controller.BackupConfigError{Reason: "SlotAssignmentFailed", Message: fmt.Sprintf("no repo slot assigned for storage %q", storage.StorageRef.Name)}
 		}
 		repoName := pgBackRestRepoName(slot)
 
@@ -326,7 +327,7 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 			}
 			if credSecret != nil {
 				if err := c.Apply(credSecret); err != nil {
-					return fmt.Errorf("apply pgBackRest credential secret for storage %q: %w", storage.Name, err)
+					return fmt.Errorf("apply pgBackRest credential secret for storage %q: %w", storage.StorageRef.Name, err)
 				}
 			}
 			if projection != nil {
@@ -359,7 +360,7 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 	// Clean up orphaned credential secrets for repos that no longer exist.
 	activeSecrets := make(map[string]struct{}, len(c.Instance().Spec.Backup.Storages))
 	for _, storage := range c.Instance().Spec.Backup.Storages {
-		if slot, ok := slotMap[storage.Name]; ok {
+		if slot, ok := slotMap[storage.StorageRef.Name]; ok {
 			activeSecrets[pgBackRestCredentialSecretName(c.Instance().Name, pgBackRestRepoName(slot))] = struct{}{}
 		}
 	}
@@ -447,7 +448,7 @@ func reconcileRepoSlotMap(existing repoSlotMap, storages []corev1alpha1.Instance
 	// Build a set of current storage names.
 	currentNames := make(map[string]struct{}, len(storages))
 	for _, s := range storages {
-		currentNames[s.Name] = struct{}{}
+		currentNames[s.StorageRef.Name] = struct{}{}
 	}
 
 	// Track which slots are occupied.
@@ -463,13 +464,13 @@ func reconcileRepoSlotMap(existing repoSlotMap, storages []corev1alpha1.Instance
 
 	// Assign free slots to new storages (those not yet in the result).
 	for _, s := range storages {
-		if _, ok := result[s.Name]; ok {
+		if _, ok := result[s.StorageRef.Name]; ok {
 			continue
 		}
 		// Find the lowest free slot.
 		for slot := 0; slot < maxPGBackRestRepos; slot++ {
 			if !occupied[slot] {
-				result[s.Name] = slot
+				result[s.StorageRef.Name] = slot
 				occupied[slot] = true
 				break
 			}
@@ -660,7 +661,7 @@ func pruneUnreferencedStorages(c *controller.Context) (bool, error) {
 	referencedStorages := make(map[string]struct{})
 	for i := range backups {
 		if backups[i].DeletionTimestamp.IsZero() {
-			referencedStorages[backups[i].Spec.StorageName] = struct{}{}
+			referencedStorages[backups[i].Spec.StorageRef.Name] = struct{}{}
 		}
 	}
 
@@ -668,7 +669,7 @@ func pruneUnreferencedStorages(c *controller.Context) (bool, error) {
 	var kept []corev1alpha1.InstanceBackupStorage
 	for _, storage := range c.Instance().Spec.Backup.Storages {
 		hasSchedules := len(storage.Schedules) > 0
-		_, hasBackups := referencedStorages[storage.Name]
+		_, hasBackups := referencedStorages[storage.StorageRef.Name]
 		if hasSchedules || hasBackups {
 			kept = append(kept, storage)
 		}
@@ -727,8 +728,7 @@ func autoRegisterStorage(c *controller.Context, storageName string) (bool, error
 
 	// Add the storage to the Instance.
 	newStorage := corev1alpha1.InstanceBackupStorage{
-		Name:       storageName,
-		StorageRef: corev1.LocalObjectReference{Name: storageName},
+		StorageRef: apicommon.ObjectRef{Name: storageName},
 	}
 
 	patch := c.Instance().DeepCopy()
