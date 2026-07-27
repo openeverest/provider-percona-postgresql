@@ -355,14 +355,6 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 		}
 	}
 
-	origRestore := opRestore.DeepCopy()
-	if err := controllerutil.SetControllerReference(restore, opRestore, c.Client().Scheme()); err != nil {
-		return controller.RestoreExecutionStatus{}, fmt.Errorf("set restore controller reference: %w", err)
-	}
-	if err := c.Client().Patch(c.Context(), opRestore, client.MergeFrom(origRestore)); err != nil {
-		return controller.RestoreExecutionStatus{}, fmt.Errorf("patch PerconaPGRestore %q: %w", restore.Name, err)
-	}
-
 	out := controller.RestoreExecutionStatus{
 		OperatorRestoreRef: opRef,
 		Message:            string(opRestore.Status.State),
@@ -573,34 +565,6 @@ func (p *Provider) BackupWatches() []controller.WatchConfig {
 			controller.ResourceVersionChangedPredicate,
 		),
 	}
-}
-
-// hasActiveRestoreForInstance reports whether the namespace has at least one
-// non-terminal Restore for the given instance.
-func hasActiveRestoreForInstance(c *controller.Context, namespace, instanceName string) (bool, error) {
-	restoreList := &backupv1alpha1.RestoreList{}
-	if err := c.Client().List(
-		c.Context(),
-		restoreList,
-		client.InNamespace(namespace),
-	); err != nil {
-		return false, fmt.Errorf("list Restore resources for instance %q: %w", instanceName, err)
-	}
-
-	for i := range restoreList.Items {
-		r := restoreList.Items[i]
-		if r.Spec.InstanceName != instanceName || !r.DeletionTimestamp.IsZero() {
-			continue
-		}
-		switch r.Status.State {
-		case backupv1alpha1.RestoreStateSucceeded, backupv1alpha1.RestoreStateFailed:
-			continue
-		default:
-			return true, nil
-		}
-	}
-
-	return false, nil
 }
 
 // RestoreWatches implements controller.RestoreWatcher. Register watches so operator
