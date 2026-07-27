@@ -4,7 +4,8 @@ kind: Instance
 metadata:
   name: my-database-simple
 spec:
-  provider: provider-percona-postgresql
+  providerRef:
+    name: provider-percona-postgresql
   components:
     engine:
       type: postgresql

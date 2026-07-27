@@ -2,14 +2,14 @@
 # This file defines both the structural topology and its UI rendering.
 #
 # config.components: Which components are used and their defaults.
-# config.configSchema: Reference a Go type for custom topology config fields.
+# config.parametersSchema: Reference a Go type for custom topology parameters fields.
 # ui: Rendering hints for the frontend form.
 #
 # See github.com/openeverest/provider-sdk/blob/main/PROVIDER_DEVELOPMENT.md
 # for detailed guidance.
 
 config:
-    configSchema: ClusterTopologyConfig
+    parametersSchema: ClusterTopologyParameters
     components:
         engine:
             type: postgresql
