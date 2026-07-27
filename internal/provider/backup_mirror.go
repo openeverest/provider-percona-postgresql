@@ -77,6 +77,14 @@ func (p *Provider) Mirror(ctx context.Context, c client.Client, obj client.Objec
 		return nil, fmt.Errorf("get instance %q: %w", pgBackup.Spec.PGCluster, err)
 	}
 
+	// Skip mirroring when the Instance is being deleted. During cascade
+	// deletion the PerconaPGCluster is still running (and pgBackRest
+	// schedules may fire new backups) but we must not create new Backup CRs
+	// that would delay the Instance cleanup.
+	if !instance.GetDeletionTimestamp().IsZero() {
+		return nil, nil
+	}
+
 	if instance.Spec.Backup == nil || instance.Spec.Backup.ClassRef.Name == "" {
 		return nil, nil
 	}
