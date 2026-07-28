@@ -24,7 +24,6 @@ def str2bool(v):
 # Keep this configurable for slower environments.
 k8s_upsert_timeout_secs = int(os.getenv('K8S_UPSERT_TIMEOUT_SECS', '600'))
 update_settings(k8s_upsert_timeout_secs=k8s_upsert_timeout_secs)
-allow_k8s_contexts('gke_cloud-dev-112233_us-central1-a_oksana-dev')
 
 # ===========================
 # Configuration (.env)
@@ -55,7 +54,7 @@ provider_namespace = os.getenv('PROVIDER_NAMESPACE', 'default')
 enable_minio = str2bool(os.getenv('ENABLE_MINIO', 'false'))
 
 # Go build environment for the provider binary.
-provider_build_env = os.getenv('PROVIDER_BUILD_ENV', 'CGO_ENABLED=0 GOOS=linux GOARCH=amd64')
+provider_build_env = os.getenv('PROVIDER_BUILD_ENV', 'CGO_ENABLED=0 GOOS=linux')
 
 # Initial admin password for the Everest UI/API.
 ui_admin_password = os.getenv('UI_ADMIN_PASSWORD', 'admin')
@@ -126,37 +125,6 @@ if install_openeverest:
     )
 
 # ===========================
-# CRD override: ensure the CRDs match the Go dependency version
-# ===========================
-# TODO: Remove this step once a new OpenEverest Helm chart is released that
-# bundles CRDs with spec.providerRef (instead of the old spec.provider).
-# The released Helm chart (2.0.0-dev.1) bundles older CRDs than the current
-# release-2.0 branch. Apply CRDs from the branch to keep them up-to-date.
-openeverest_crd_branch = os.getenv('OPENEVEREST_CRD_BRANCH', 'release-2.0')
-crd_base_url = 'https://raw.githubusercontent.com/openeverest/openeverest/{0}/config/crd/bases'.format(openeverest_crd_branch)
-
-crd_update_deps = []
-if install_openeverest:
-    crd_update_deps = ['openeverest']
-
-local_resource(
-    'update-openeverest-crds',
-    cmd='''
-set -eu
-BASE="{0}"
-kubectl apply -f "$BASE/core.openeverest.io_instances.yaml"
-kubectl apply -f "$BASE/core.openeverest.io_providers.yaml"
-kubectl apply -f "$BASE/backup.openeverest.io_backupclasses.yaml"
-kubectl apply -f "$BASE/backup.openeverest.io_backups.yaml"
-kubectl apply -f "$BASE/backup.openeverest.io_restores.yaml"
-kubectl apply -f "$BASE/backup.openeverest.io_backupstorages.yaml"
-echo "CRDs updated from {1}"
-'''.format(crd_base_url, openeverest_crd_branch),
-    resource_deps=crd_update_deps,
-    labels=['openeverest'],
-)
-
-# ===========================
 # Provider: generate + build
 # ===========================
 local_resource(
@@ -216,9 +184,9 @@ docker_build_with_restart(
 # image.repository/image.tag values and live-updates the running pod. Using
 # helm_resource also guarantees the Provider CR is applied only after required
 # CRDs exist.
-wait_provider_crd_deps = ['update-openeverest-crds']
+wait_provider_crd_deps = []
 if install_openeverest:
-    wait_provider_crd_deps = ['update-openeverest-crds']
+    wait_provider_crd_deps = ['openeverest']
 
 local_resource(
     'wait-provider-crd',
