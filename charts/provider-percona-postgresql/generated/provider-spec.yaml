@@ -111,7 +111,7 @@ spec:
               fieldParams:
                 displayEmpty: true
                 label: Monitoring endpoint
-              path: spec.components.monitoring.customSpec.monitoringConfigName
+              path: spec.components.monitoring.parameters.monitoringConfigName
               uiType: select
           description: Attach a MonitoringConfig to collect metrics.
           label: Monitoring
