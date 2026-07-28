@@ -20,7 +20,6 @@ import (
 const (
 	monitoringConfigRefFieldPath = "spec.components.monitoring.parameters.monitoringConfigName"
 	monitoringConfigAPIKeyKey    = "apiKey"
-	pgPMMServerKey               = "PMM_SERVER_KEY"
 	pgPMMServerToken             = "PMM_SERVER_TOKEN"
 )
 
@@ -74,7 +73,7 @@ func applyMonitoringSettings(c *controller.Context, cluster *pgv2.PerconaPGClust
 	}
 
 	pmmSecretName := c.Name() + "-pmm-secret"
-	if err := syncPMMCredentials(c, monitoringCfg.Spec.PMM.CredentialsSecretRef.Name, pmmImage, pmmSecretName); err != nil {
+	if err := syncPMMCredentials(c, monitoringCfg.Spec.PMM.CredentialsSecretRef.Name, pmmSecretName); err != nil {
 		return err
 	}
 
@@ -123,7 +122,7 @@ func pmmServerHostFromURL(rawURL string) (string, error) {
 	return u.Host, nil
 }
 
-func syncPMMCredentials(c *controller.Context, credentialsSecretName, pmmImage, pmmSecretName string) error {
+func syncPMMCredentials(c *controller.Context, credentialsSecretName, pmmSecretName string) error {
 	credentialsSecret := &corev1.Secret{}
 	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: c.Namespace(), Name: credentialsSecretName}, credentialsSecret); err != nil {
 		return fmt.Errorf("get PMM credentials Secret %q: %w", credentialsSecretName, err)
@@ -137,15 +136,11 @@ func syncPMMCredentials(c *controller.Context, credentialsSecretName, pmmImage, 
 	err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: c.Namespace(), Name: pmmSecretName}, pmmSecret)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// Create the PMM secret
 			pmmSecret = &corev1.Secret{}
 			pmmSecret.Name = pmmSecretName
 			pmmSecret.Namespace = c.Namespace()
-			pmmSecret.Data = map[string][]byte{}
-			if isPMM3Image(pmmImage) {
-				pmmSecret.Data[pgPMMServerToken] = append([]byte(nil), apiKey...)
-			} else {
-				pmmSecret.Data[pgPMMServerKey] = append([]byte(nil), apiKey...)
+			pmmSecret.Data = map[string][]byte{
+				pgPMMServerToken: append([]byte(nil), apiKey...),
 			}
 			if err := c.Client().Create(c.Context(), pmmSecret); err != nil {
 				return fmt.Errorf("create PMM secret %q: %w", pmmSecretName, err)
@@ -155,23 +150,7 @@ func syncPMMCredentials(c *controller.Context, credentialsSecretName, pmmImage, 
 		return fmt.Errorf("get PMM Secret %q: %w", pmmSecretName, err)
 	}
 
-	desiredKey := pgPMMServerKey
-	obsoleteKey := pgPMMServerToken
-	if isPMM3Image(pmmImage) {
-		desiredKey = pgPMMServerToken
-		obsoleteKey = pgPMMServerKey
-	}
-
-	hasDesired := false
-	if pmmSecret.Data != nil {
-		_, hasDesired = pmmSecret.Data[desiredKey]
-	}
-	needsDesiredUpdate := !hasDesired || !bytes.Equal(pmmSecret.Data[desiredKey], apiKey)
-	hasObsolete := false
-	if pmmSecret.Data != nil {
-		_, hasObsolete = pmmSecret.Data[obsoleteKey]
-	}
-	if !needsDesiredUpdate && !hasObsolete {
+	if pmmSecret.Data != nil && bytes.Equal(pmmSecret.Data[pgPMMServerToken], apiKey) {
 		return nil
 	}
 
@@ -179,27 +158,13 @@ func syncPMMCredentials(c *controller.Context, credentialsSecretName, pmmImage, 
 	if pmmSecret.Data == nil {
 		pmmSecret.Data = map[string][]byte{}
 	}
-	pmmSecret.Data[desiredKey] = append([]byte(nil), apiKey...)
-	delete(pmmSecret.Data, obsoleteKey)
+	pmmSecret.Data[pgPMMServerToken] = append([]byte(nil), apiKey...)
 
 	if err := c.Client().Patch(c.Context(), pmmSecret, client.MergeFrom(orig)); err != nil {
 		return fmt.Errorf("sync PMM credentials to Secret %q: %w", pmmSecretName, err)
 	}
 
 	return nil
-}
-
-func isPMM3Image(image string) bool {
-	if image == "" {
-		return false
-	}
-	image = strings.SplitN(image, "@", 2)[0]
-	i := strings.LastIndex(image, ":")
-	if i == -1 || i == len(image)-1 {
-		return false
-	}
-	tag := image[i+1:]
-	return strings.HasPrefix(tag, "3.") || tag == "3"
 }
 
 func monitoringImageForComponent(c *controller.Context, providerSpec *corev1alpha1.ProviderSpec, monitoringType string, component corev1alpha1.ComponentSpec) string {
@@ -231,6 +196,3 @@ func monitoringImageForComponent(c *controller.Context, providerSpec *corev1alph
 
 	return controller.GetDefaultImage(providerSpec, monitoringType)
 }
-
-
-
