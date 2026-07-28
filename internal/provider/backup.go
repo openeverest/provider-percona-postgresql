@@ -616,14 +616,14 @@ func isStanzaCreated(pgCluster *pgv2.PerconaPGCluster, repoName string) bool {
 func immutableBackupSpecChangeMessage(opBackup *pgv2.PerconaPGBackup, backup *backupv1alpha1.Backup) string {
 	if backup.Spec.InstanceRef.Name != opBackup.Spec.PGCluster {
 		return fmt.Sprintf(
-			"cannot change backup spec.instanceName after creation (requested %q, existing %q)",
+			"cannot change backup spec.InstanceRef.Name after creation (requested %q, existing %q)",
 			backup.Spec.InstanceRef.Name,
 			opBackup.Spec.PGCluster,
 		)
 	}
 	if opBackup.Spec.RepoName != nil && backup.Spec.StorageRef.Name != *opBackup.Spec.RepoName {
 		return fmt.Sprintf(
-			"cannot change backup spec.storageName after creation (requested %q, existing %q)",
+			"cannot change backup spec.StorageRef.Name after creation (requested %q, existing %q)",
 			backup.Spec.StorageRef.Name,
 			*opBackup.Spec.RepoName,
 		)
