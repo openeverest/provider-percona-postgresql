@@ -111,7 +111,20 @@ ui:
           componentsOrder:
             - proxyType
             - proxyNodes
+        monitoring:
+            label: Monitoring
+            description: Attach a MonitoringConfig to collect metrics.
+            components:
+                monitoring:
+                    uiType: select
+                    path: spec.components.monitoring.customSpec.monitoringConfigName
+                    fieldParams:
+                        label: Monitoring endpoint
+                        displayEmpty: true
+                    dataSource:
+                        provider: monitoringConfigs
     sectionsOrder:
         - databaseVersion
         - resources
         - proxy
+        - monitoring

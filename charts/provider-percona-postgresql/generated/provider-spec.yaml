@@ -103,6 +103,18 @@ spec:
                 required: true
           description: Provide the database version for your new database.
           label: Database Version
+        monitoring:
+          components:
+            monitoring:
+              dataSource:
+                provider: monitoringConfigs
+              fieldParams:
+                displayEmpty: true
+                label: Monitoring endpoint
+              path: spec.components.monitoring.customSpec.monitoringConfigName
+              uiType: select
+          description: Attach a MonitoringConfig to collect metrics.
+          label: Monitoring
         proxy:
           components:
             proxyNodes:
@@ -179,6 +191,7 @@ spec:
         - databaseVersion
         - resources
         - proxy
+        - monitoring
   versions:
     - components:
         engine: 18.4-1
