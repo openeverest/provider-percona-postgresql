@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
@@ -150,6 +151,8 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 			}, nil
 		}
 
+		backupType := resolveBackupType(backup)
+
 		opBackup = &pgv2.PerconaPGBackup{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      backup.Name,
@@ -158,7 +161,7 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 			Spec: pgv2.PerconaPGBackupSpec{
 				PGCluster: backup.Spec.InstanceRef.Name,
 				RepoName:  &repoName,
-				Options:   []string{"--type=full"},
+				Options:   []string{fmt.Sprintf("--type=%s", backupType)},
 			},
 		}
 		if err := ensureBackupControllerReference(opBackup); err != nil {
@@ -630,4 +633,45 @@ func immutableBackupSpecChangeMessage(opBackup *pgv2.PerconaPGBackup, backup *ba
 	}
 
 	return ""
+}
+
+// resolveBackupType extracts the pgBackRest backup type from the Backup CR's
+// parameters. If no parameters are set or the type field is empty, it defaults
+// to "full". The returned value matches pgv2.PGBackupType constants.
+//
+// The function handles two parameter layouts:
+//
+//	Flat:   {"type": "differential"}
+//	Nested: {"spec": {"parameters": {"type": "differential"}}}
+//
+// The nested form appears when a UI or API gateway wraps the user-supplied
+// config under spec.parameters before writing it to the Backup CR.
+func resolveBackupType(backup *backupv1alpha1.Backup) pgv2.PGBackupType {
+	if backup.Spec.Parameters == nil || len(backup.Spec.Parameters.Raw) == 0 {
+		return pgv2.PGBackupTypeFull
+	}
+	var cfg struct {
+		Type pgv2.PGBackupType `json:"type"`
+		Spec *struct {
+			Parameters *struct {
+				Type pgv2.PGBackupType `json:"type"`
+			} `json:"parameters"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(backup.Spec.Parameters.Raw, &cfg); err != nil {
+		return pgv2.PGBackupTypeFull
+	}
+	// Prefer the flat layout; fall back to nested.
+	backupType := cfg.Type
+	if backupType == "" && cfg.Spec != nil && cfg.Spec.Parameters != nil {
+		backupType = cfg.Spec.Parameters.Type
+	}
+	switch backupType {
+	case pgv2.PGBackupTypeDifferential:
+		return pgv2.PGBackupTypeDifferential
+	case pgv2.PGBackupTypeIncremental:
+		return pgv2.PGBackupTypeIncremental
+	default:
+		return pgv2.PGBackupTypeFull
+	}
 }

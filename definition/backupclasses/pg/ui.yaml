@@ -7,8 +7,23 @@
 #   restore — restore modal (fields backed by restoreConfig.openAPIV3Schema).
 
 backup:
-    components: {}
-    componentsOrder: []
+    components:
+        type:
+            fieldParams:
+                defaultValue: full
+                label: Backup type
+                options:
+                    - label: Full
+                      value: full
+                    - label: Differential
+                      value: differential
+                    - label: Incremental
+                      value: incremental
+            path: spec.parameters.type
+            uiType: select
+            validation: {}
+    componentsOrder:
+        - type
     label: Backup Configuration
 pitr:
     components:

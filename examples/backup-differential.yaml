@@ -1,0 +1,19 @@
+# Example: Differential backup.
+# A differential backup stores only pages changed since the last full backup.
+# It requires a prior full backup to exist in the same repo.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: my-diff-backup
+spec:
+  instanceRef:
+    name: example-instance
+  classRef:
+    name: pg
+  storageRef:
+    name: my-s3-storage
+  parameters:
+    type: differential
+
+
+

@@ -1,0 +1,20 @@
+# Example: Incremental backup.
+# An incremental backup stores only pages changed since the last backup of any
+# type (full, differential, or incremental). It requires a prior backup to
+# exist in the same repo.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: my-incr-backup
+spec:
+  instanceRef:
+    name: example-instance
+  classRef:
+    name: pg
+  storageRef:
+    name: my-s3-storage
+  parameters:
+    type: incremental
+
+
+

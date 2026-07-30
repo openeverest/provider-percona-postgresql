@@ -6,9 +6,24 @@
 // +k8s:openapi-gen=true
 package pg
 
+// PgBackupType defines the type of backup to take.
+// Values match pgv2.PGBackupType from the Percona PG operator:
+// "full", "differential", "incremental".
+// +kubebuilder:validation:Enum=full;differential;incremental
+type PgBackupType string
+
 // PgBackupConfig describes the configuration accepted by Backup CRs that
-// target this class (spec.config). Add fields the user can set per backup.
-type PgBackupConfig struct{}
+// target this class (spec.parameters). Add fields the user can set per backup.
+type PgBackupConfig struct {
+	// Type selects the pgBackRest backup type. "full" (default) creates a
+	// self-contained backup. "differential" backs up pages changed since the
+	// last full backup. "incremental" backs up pages changed since the last
+	// backup of any type (full, differential, or incremental).
+	// +kubebuilder:default=full
+	// +kubebuilder:validation:Enum=full;differential;incremental
+	// +optional
+	Type PgBackupType `json:"type,omitempty"`
+}
 
 // PgRestoreConfig describes the configuration accepted by Restore CRs that
 // target this class (spec.config). Add fields the user can set per restore.
