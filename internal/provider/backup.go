@@ -635,9 +635,17 @@ func immutableBackupSpecChangeMessage(opBackup *pgv2.PerconaPGBackup, backup *ba
 	return ""
 }
 
+// pgBackRest --type flag values. These are the short names that pgBackRest
+// accepts on the command line, as opposed to the long-form names used in the
+// Percona operator's CRD (pgv2.PGBackupType).
+const (
+	pgBackRestTypeFull = "full"
+	pgBackRestTypeDiff = "diff"
+	pgBackRestTypeIncr = "incr"
+)
+
 // resolveBackupType extracts the pgBackRest backup type from the Backup CR's
-// parameters. If no parameters are set or the type field is empty, it defaults
-// to "full". The returned value matches pgv2.PGBackupType constants.
+// parameters and returns the pgBackRest CLI --type flag value (full/diff/incr).
 //
 // The function handles two parameter layouts:
 //
@@ -646,9 +654,9 @@ func immutableBackupSpecChangeMessage(opBackup *pgv2.PerconaPGBackup, backup *ba
 //
 // The nested form appears when a UI or API gateway wraps the user-supplied
 // config under spec.parameters before writing it to the Backup CR.
-func resolveBackupType(backup *backupv1alpha1.Backup) pgv2.PGBackupType {
+func resolveBackupType(backup *backupv1alpha1.Backup) string {
 	if backup.Spec.Parameters == nil || len(backup.Spec.Parameters.Raw) == 0 {
-		return pgv2.PGBackupTypeFull
+		return pgBackRestTypeFull
 	}
 	var cfg struct {
 		Type pgv2.PGBackupType `json:"type"`
@@ -659,7 +667,7 @@ func resolveBackupType(backup *backupv1alpha1.Backup) pgv2.PGBackupType {
 		} `json:"spec"`
 	}
 	if err := json.Unmarshal(backup.Spec.Parameters.Raw, &cfg); err != nil {
-		return pgv2.PGBackupTypeFull
+		return pgBackRestTypeFull
 	}
 	// Prefer the flat layout; fall back to nested.
 	backupType := cfg.Type
@@ -668,10 +676,10 @@ func resolveBackupType(backup *backupv1alpha1.Backup) pgv2.PGBackupType {
 	}
 	switch backupType {
 	case pgv2.PGBackupTypeDifferential:
-		return pgv2.PGBackupTypeDifferential
+		return pgBackRestTypeDiff
 	case pgv2.PGBackupTypeIncremental:
-		return pgv2.PGBackupTypeIncremental
+		return pgBackRestTypeIncr
 	default:
-		return pgv2.PGBackupTypeFull
+		return pgBackRestTypeFull
 	}
 }
