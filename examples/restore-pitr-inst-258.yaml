@@ -8,7 +8,8 @@ spec:
   dataSource:
     type: Backup
     backup:
-      backupName: backup-1gw
+      backupRef:
+        name: backup-1gw
       pitr:
         type: date
         date: "2026-07-24T10:11:00Z"

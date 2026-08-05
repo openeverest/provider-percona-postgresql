@@ -365,7 +365,7 @@ func TestApplyRetentionConfig(t *testing.T) {
 			name:     "differential backup with retention",
 			repoName: "repo2",
 			schedules: []corev1alpha1.InstanceBackupSchedule{
-				{Name: "differential", Enabled: true, Cron: "0 3 * * *", RetentionCopies: 5},
+				{Name: "diff", Enabled: true, Cron: "0 3 * * *", RetentionCopies: 5},
 			},
 			wantKeys: map[string]string{
 				"repo2-retention-diff": "5",

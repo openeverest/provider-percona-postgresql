@@ -258,7 +258,7 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 	if restore.Spec.DataSource.Backup == nil || restore.Spec.DataSource.Backup.BackupRef.Name == "" {
 		return controller.RestoreExecutionStatus{
 			State:              backupv1alpha1.RestoreStateFailed,
-			Message:            "Restore dataSource.backup.backupName is required",
+			Message:            "Restore dataSource.backup.backupRef is required",
 			OperatorRestoreRef: opRef,
 		}, nil
 	}
@@ -635,51 +635,22 @@ func immutableBackupSpecChangeMessage(opBackup *pgv2.PerconaPGBackup, backup *ba
 	return ""
 }
 
-// pgBackRest --type flag values. These are the short names that pgBackRest
-// accepts on the command line, as opposed to the long-form names used in the
-// Percona operator's CRD (pgv2.PGBackupType).
-const (
-	pgBackRestTypeFull = "full"
-	pgBackRestTypeDiff = "diff"
-	pgBackRestTypeIncr = "incr"
-)
+const defaultBackupType = "full"
 
 // resolveBackupType extracts the pgBackRest backup type from the Backup CR's
 // parameters and returns the pgBackRest CLI --type flag value (full/diff/incr).
-//
-// The function handles two parameter layouts:
-//
-//	Flat:   {"type": "differential"}
-//	Nested: {"spec": {"parameters": {"type": "differential"}}}
-//
-// The nested form appears when a UI or API gateway wraps the user-supplied
-// config under spec.parameters before writing it to the Backup CR.
 func resolveBackupType(backup *backupv1alpha1.Backup) string {
 	if backup.Spec.Parameters == nil || len(backup.Spec.Parameters.Raw) == 0 {
-		return pgBackRestTypeFull
+		return defaultBackupType
 	}
 	var cfg struct {
-		Type pgv2.PGBackupType `json:"type"`
-		Spec *struct {
-			Parameters *struct {
-				Type pgv2.PGBackupType `json:"type"`
-			} `json:"parameters"`
-		} `json:"spec"`
+		Type string `json:"type"`
 	}
 	if err := json.Unmarshal(backup.Spec.Parameters.Raw, &cfg); err != nil {
-		return pgBackRestTypeFull
+		return defaultBackupType
 	}
-	// Prefer the flat layout; fall back to nested.
-	backupType := cfg.Type
-	if backupType == "" && cfg.Spec != nil && cfg.Spec.Parameters != nil {
-		backupType = cfg.Spec.Parameters.Type
+	if cfg.Type == "" {
+		return defaultBackupType
 	}
-	switch backupType {
-	case pgv2.PGBackupTypeDifferential:
-		return pgBackRestTypeDiff
-	case pgv2.PGBackupTypeIncremental:
-		return pgBackRestTypeIncr
-	default:
-		return pgBackRestTypeFull
-	}
+	return cfg.Type
 }

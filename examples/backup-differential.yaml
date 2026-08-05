@@ -13,7 +13,7 @@ spec:
   storageRef:
     name: my-s3-storage
   parameters:
-    type: differential
+    type: diff
 
 
 

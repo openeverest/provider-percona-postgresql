@@ -16,10 +16,10 @@ backup:
                     - label: Full
                       value: full
                     - label: Differential
-                      value: differential
+                      value: diff
                     - label: Incremental
-                      value: incremental
-            path: spec.parameters.type
+                      value: incr
+            path: type
             uiType: select
             validation: {}
     componentsOrder:
