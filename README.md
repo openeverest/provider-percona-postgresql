@@ -54,12 +54,15 @@ This provider has **not been released yet** — the table describes `main`.
 
 ## Capabilities
 
+What you can do to a running instance through the `Instance` API. Upgrading the
+provider itself is covered under [Installation](#installation).
+
 | Capability | Status | Notes |
 |---|---|---|
 | Provisioning | ✅ | |
 | Horizontal scaling | ✅ | `spec.components.<name>.replicas` |
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.<name>.resources` |
-| Version upgrades | ✅ | change `spec.version`; see [Versions](#versions) |
+| Version upgrades | ✅ | of the deployed PostgreSQL version — change `spec.version`; see [Versions](#versions) |
 | Custom configuration | ❌ | not yet exposed through the Instance API |
 | Monitoring | ❌ | planned |
 | TLS | ⚠️ | the operator provisions certificates; nothing is exposed through the Instance API |
@@ -129,9 +132,14 @@ spec:
           memory: 2G
       storage:
         size: 10Gi
+    proxy:
+      type: pgbouncer
+      replicas: 2
 ```
 
 Component names are defined by this provider — see [definition/provider.yaml](definition/provider.yaml).
+`proxy` is required in the `cluster` topology and its `replicas` must be set explicitly; use
+`replicas: 0` to run without pgBouncer.
 `spec.version` and `spec.topology` are optional; the provider defaults apply.
 More examples live in [examples/](examples/).
 
