@@ -33,8 +33,22 @@ package provider
 // PROVIDER-SPECIFIC RBAC — Percona PostgreSQL operator resources.
 // =============================================================================
 // Allow managing connection Secrets in tenant namespaces.
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/status,verbs=get
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/finalizers,verbs=update
-// +kubebuilder:rbac:groups=backup.openeverest.io,resources=restores,verbs=get;list;watch
+// +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgbackups,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgbackups/status,verbs=get
+// +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgbackups/finalizers,verbs=update
+// +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgrestores,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgrestores/status,verbs=get
+// +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgrestores/finalizers,verbs=update
+// +kubebuilder:rbac:groups=backup.openeverest.io,resources=backupclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=backup.openeverest.io,resources=backupstorages,verbs=get;list;watch
+// +kubebuilder:rbac:groups=backup.openeverest.io,resources=backups,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=backup.openeverest.io,resources=backups/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=backup.openeverest.io,resources=backups/finalizers,verbs=update
+// +kubebuilder:rbac:groups=backup.openeverest.io,resources=restores,verbs=get;list;watch;update;patch;delete
+// +kubebuilder:rbac:groups=backup.openeverest.io,resources=restores/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=backup.openeverest.io,resources=restores/finalizers,verbs=update
+// +kubebuilder:rbac:groups=monitoring.openeverest.io,resources=monitoringconfigs,verbs=get;list;watch
