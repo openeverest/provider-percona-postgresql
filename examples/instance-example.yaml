@@ -23,3 +23,6 @@ spec:
           memory: 2G
       storage:
         size: 10Gi
+    proxy:
+      type: pgbouncer
+      replicas: 2
