@@ -17,3 +17,11 @@ type PgbouncerParameters struct{}
 // Add fields here when the postgresql component type needs custom parameters
 // beyond what the base Instance spec provides.
 type PostgresqlParameters struct{}
+
+// PmmParameters defines custom parameters for PMM monitoring.
+type PmmParameters struct {
+	// MonitoringConfigName specifies the name of the MonitoringConfig resource
+	// to use for configuring PMM monitoring.
+	// If not specified, monitoring will not be configured.
+	MonitoringConfigName *string `json:"monitoringConfigName,omitempty"`
+}

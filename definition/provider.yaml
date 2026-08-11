@@ -7,4 +7,6 @@ components:
         type: postgresql
     proxy:
         type: pgbouncer
+    monitoring:
+        type: pmm
 name: provider-percona-postgresql

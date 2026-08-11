@@ -12,3 +12,6 @@ spec:
       replicas: 1
       storage:
         size: 10Gi
+    proxy:
+      type: pgbouncer
+      replicas: 2

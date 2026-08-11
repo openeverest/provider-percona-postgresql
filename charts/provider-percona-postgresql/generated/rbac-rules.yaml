@@ -112,6 +112,14 @@
     - list
     - watch
 - apiGroups:
+    - monitoring.openeverest.io
+  resources:
+    - monitoringconfigs
+  verbs:
+    - get
+    - list
+    - watch
+- apiGroups:
     - pgv2.percona.com
   resources:
     - perconapgbackups
