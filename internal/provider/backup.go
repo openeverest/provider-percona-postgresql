@@ -48,6 +48,11 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 		if err := c.Client().Patch(c.Context(), backup, client.MergeFrom(origBackupCR)); err != nil {
 			return controller.BackupExecutionStatus{}, fmt.Errorf("patch Backup %q labels: %w", backup.Name, err)
 		}
+		// Re-fetch the backup to ensure we have the latest resource version
+		// before using it as a controller reference owner.
+		if err := c.Client().Get(c.Context(), client.ObjectKeyFromObject(backup), backup); err != nil {
+			return controller.BackupExecutionStatus{}, fmt.Errorf("re-fetch Backup %q after label patch: %w", backup.Name, err)
+		}
 	}
 
 	opRef := &apicommon.TypedObjectRef{
@@ -243,6 +248,11 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 		restore.Labels[instanceNameLabelKey] = restore.Spec.InstanceRef.Name
 		if err := c.Client().Patch(c.Context(), restore, client.MergeFrom(origRestoreCR)); err != nil {
 			return controller.RestoreExecutionStatus{}, fmt.Errorf("patch Restore %q labels: %w", restore.Name, err)
+		}
+		// Re-fetch the restore to ensure we have the latest resource version
+		// before using it as a controller reference owner.
+		if err := c.Client().Get(c.Context(), client.ObjectKeyFromObject(restore), restore); err != nil {
+			return controller.RestoreExecutionStatus{}, fmt.Errorf("re-fetch Restore %q after label patch: %w", restore.Name, err)
 		}
 	}
 
