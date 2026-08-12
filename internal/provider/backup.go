@@ -87,8 +87,8 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 		if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: backup.Namespace, Name: backup.Spec.InstanceRef.Name}, pgCluster); err != nil {
 			if apierrors.IsNotFound(err) {
 				return controller.BackupExecutionStatus{
-					State:             backupv1alpha1.BackupStatePending,
-					Message:           "Waiting for PerconaPGCluster",
+					State:             backupv1alpha1.BackupStateFailed,
+					Message:           fmt.Sprintf("PerconaPGCluster %q not found", backup.Spec.InstanceRef.Name),
 					OperatorBackupRef: opRef,
 				}, nil
 			}
@@ -276,8 +276,8 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: backupName}, sourceBackup); err != nil {
 		if apierrors.IsNotFound(err) {
 			return controller.RestoreExecutionStatus{
-				State:              backupv1alpha1.RestoreStatePending,
-				Message:            "Waiting for source Backup",
+				State:              backupv1alpha1.RestoreStateFailed,
+				Message:            fmt.Sprintf("source Backup %q not found", backupName),
 				OperatorRestoreRef: opRef,
 			}, nil
 		}
