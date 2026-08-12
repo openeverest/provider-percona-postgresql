@@ -644,6 +644,11 @@ func (p *Provider) OperatorBackupType() client.Object {
 // no schedules configured AND are not referenced by any existing Backup CR.
 // This automatically frees repo slots when a storage is no longer in use.
 // Returns true if the Instance was modified (and patched).
+//
+// TODO: When seeding from Backup, PITR, or Import is supported, this logic
+// must also check whether the storage is in use by an active restore CR.
+// The storage is needed for the duration of the seeding operation even if
+// there are no schedules or Backup CRs referencing it.
 func pruneUnreferencedStorages(c *controller.Context) (bool, error) {
 	if c.Instance().Spec.Backup == nil || len(c.Instance().Spec.Backup.Storages) == 0 {
 		return false, nil
