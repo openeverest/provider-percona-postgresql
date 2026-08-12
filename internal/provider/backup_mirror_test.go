@@ -883,9 +883,10 @@ func TestAutoRegisterStorage_RespectsMaxRepos(t *testing.T) {
 
 	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
 
-	// All 4 slots full — should not register.
+	// All 4 slots full — should return an error.
 	registered, err := autoRegisterStorage(c, "s5")
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "maximum number of backup repositories")
 	assert.False(t, registered)
 	assert.Len(t, c.Instance().Spec.Backup.Storages, 4)
 }

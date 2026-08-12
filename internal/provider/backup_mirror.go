@@ -728,7 +728,7 @@ func autoRegisterStorage(c *controller.Context, storageName string) (bool, error
 
 	// Check we haven't exceeded the max repos limit.
 	if len(c.Instance().Spec.Backup.Storages) >= maxPGBackRestRepos {
-		return false, nil
+		return false, fmt.Errorf("cannot register storage %q: instance already has the maximum number of backup repositories (%d)", storageName, maxPGBackRestRepos)
 	}
 
 	// Add the storage to the Instance.

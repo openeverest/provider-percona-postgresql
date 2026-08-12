@@ -102,7 +102,11 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 		repoName, found := storageNameToRepoName(c, backup.Spec.StorageRef.Name, pgCluster)
 		if !found {
 			if registered, err := autoRegisterStorage(c, backup.Spec.StorageRef.Name); err != nil {
-				return controller.BackupExecutionStatus{}, fmt.Errorf("auto-register storage %q: %w", backup.Spec.StorageRef.Name, err)
+				return controller.BackupExecutionStatus{
+					State:             backupv1alpha1.BackupStateFailed,
+					Message:           fmt.Sprintf("Failed to auto-register storage %q: %v", backup.Spec.StorageRef.Name, err),
+					OperatorBackupRef: opRef,
+				}, nil
 			} else if !registered {
 				return controller.BackupExecutionStatus{
 					State:             backupv1alpha1.BackupStatePending,
