@@ -59,7 +59,7 @@ spec:
           fieldParams:
             defaultValue: 60
             label: WAL archive timeout (seconds)
-          path: spec.backup.storages[].pitr.config.archiveTimeoutSeconds
+          path: parameters.archiveTimeoutSeconds
           uiType: number
           validation:
             min: 1
