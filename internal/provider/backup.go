@@ -48,6 +48,11 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 		if err := c.Client().Patch(c.Context(), backup, client.MergeFrom(origBackupCR)); err != nil {
 			return controller.BackupExecutionStatus{}, fmt.Errorf("patch Backup %q labels: %w", backup.Name, err)
 		}
+		// Re-fetch the backup to ensure we have the latest resource version
+		// before using it as a controller reference owner.
+		if err := c.Client().Get(c.Context(), client.ObjectKeyFromObject(backup), backup); err != nil {
+			return controller.BackupExecutionStatus{}, fmt.Errorf("re-fetch Backup %q after label patch: %w", backup.Name, err)
+		}
 	}
 
 	opRef := &apicommon.TypedObjectRef{
@@ -82,8 +87,8 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 		if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: backup.Namespace, Name: backup.Spec.InstanceRef.Name}, pgCluster); err != nil {
 			if apierrors.IsNotFound(err) {
 				return controller.BackupExecutionStatus{
-					State:             backupv1alpha1.BackupStatePending,
-					Message:           "Waiting for PerconaPGCluster",
+					State:             backupv1alpha1.BackupStateFailed,
+					Message:           fmt.Sprintf("PerconaPGCluster %q not found", backup.Spec.InstanceRef.Name),
 					OperatorBackupRef: opRef,
 				}, nil
 			}
@@ -97,7 +102,11 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 		repoName, found := storageNameToRepoName(c, backup.Spec.StorageRef.Name, pgCluster)
 		if !found {
 			if registered, err := autoRegisterStorage(c, backup.Spec.StorageRef.Name); err != nil {
-				return controller.BackupExecutionStatus{}, fmt.Errorf("auto-register storage %q: %w", backup.Spec.StorageRef.Name, err)
+				return controller.BackupExecutionStatus{
+					State:             backupv1alpha1.BackupStateFailed,
+					Message:           fmt.Sprintf("Failed to auto-register storage %q: %v", backup.Spec.StorageRef.Name, err),
+					OperatorBackupRef: opRef,
+				}, nil
 			} else if !registered {
 				return controller.BackupExecutionStatus{
 					State:             backupv1alpha1.BackupStatePending,
@@ -244,6 +253,11 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 		if err := c.Client().Patch(c.Context(), restore, client.MergeFrom(origRestoreCR)); err != nil {
 			return controller.RestoreExecutionStatus{}, fmt.Errorf("patch Restore %q labels: %w", restore.Name, err)
 		}
+		// Re-fetch the restore to ensure we have the latest resource version
+		// before using it as a controller reference owner.
+		if err := c.Client().Get(c.Context(), client.ObjectKeyFromObject(restore), restore); err != nil {
+			return controller.RestoreExecutionStatus{}, fmt.Errorf("re-fetch Restore %q after label patch: %w", restore.Name, err)
+		}
 	}
 
 	opRef := &apicommon.TypedObjectRef{
@@ -266,8 +280,8 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: backupName}, sourceBackup); err != nil {
 		if apierrors.IsNotFound(err) {
 			return controller.RestoreExecutionStatus{
-				State:              backupv1alpha1.RestoreStatePending,
-				Message:            "Waiting for source Backup",
+				State:              backupv1alpha1.RestoreStateFailed,
+				Message:            fmt.Sprintf("source Backup %q not found", backupName),
 				OperatorRestoreRef: opRef,
 			}, nil
 		}

@@ -342,20 +342,19 @@ func (p *Provider) Sync(c *controller.Context) error {
 	// Instance as Failed.
 	var backupConfigErr error
 	if err := applyBackupSettings(c, cluster); err != nil {
-		if controller.AsBackupConfigError(err) != nil {
-			backupConfigErr = err
-			// Preserve the existing cluster's backup configuration so we
-			// don't apply an inconsistent spec (e.g. enabled=true with
-			// zero repos) or accidentally wipe a previously working setup.
-			existing := &pgv2.PerconaPGCluster{}
-			if getErr := c.Get(existing, c.Name()); getErr == nil {
-				cluster.Spec.Backups = existing.Spec.Backups
-			}
-			// If the cluster doesn't exist yet, defaultSpec() already has
-			// backups disabled which is safe.
-		} else {
+		if controller.AsBackupConfigError(err) == nil {
 			return err
 		}
+		backupConfigErr = err
+		// Preserve the existing cluster's backup configuration so we
+		// don't apply an inconsistent spec (e.g. enabled=true with
+		// zero repos) or accidentally wipe a previously working setup.
+		existing := &pgv2.PerconaPGCluster{}
+		if getErr := c.Get(existing, c.Name()); getErr == nil {
+			cluster.Spec.Backups = existing.Spec.Backups
+		}
+		// If the cluster doesn't exist yet, defaultSpec() already has
+		// backups disabled which is safe.
 	}
 
 	// Preserve backup-related fields set by the PG operator (manual backup
