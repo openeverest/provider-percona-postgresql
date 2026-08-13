@@ -46,11 +46,9 @@ never manages pods directly — all lifecycle work is delegated to the operator.
 
 ## Compatibility
 
-This provider has **not been released yet** — the table describes `main`.
-
 | provider-percona-postgresql | OpenEverest | Percona Operator for PostgreSQL | Kubernetes |
 |---|---|---|---|
-| `main` | `>= 2.0.0` | `3.0.x` | `1.30` – `1.34` |
+| `0.1.x` | `2.0.0-dev.2` | `3.0.x` | `1.30` – `1.34` |
 
 ## Capabilities
 
