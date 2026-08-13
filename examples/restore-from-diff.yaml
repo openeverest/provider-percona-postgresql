@@ -1,0 +1,17 @@
+# Example: Restore from a differential or incremental backup.
+# pgBackRest automatically resolves the dependency chain (the parent full backup
+# and any intermediate diff/incr backups) when restoring from a non-full backup.
+# The restore spec is the same regardless of the source backup's type.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Restore
+metadata:
+  name: restore-from-diff
+spec:
+  instanceRef:
+    name: example-instance
+  dataSource:
+    type: Backup
+    backup:
+      backupRef:
+        name: my-diff-backup
+

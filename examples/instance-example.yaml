@@ -11,7 +11,8 @@ kind: Instance
 metadata:
   name: example-instance
 spec:
-  provider: provider-percona-postgresql
+  providerRef:
+    name: provider-percona-postgresql
   components:
     engine:
       type: postgresql
@@ -22,3 +23,6 @@ spec:
           memory: 2G
       storage:
         size: 10Gi
+    proxy:
+      type: pgbouncer
+      replicas: 2

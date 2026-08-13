@@ -4,10 +4,14 @@ kind: Instance
 metadata:
   name: my-database-simple
 spec:
-  provider: provider-percona-postgresql
+  providerRef:
+    name: provider-percona-postgresql
   components:
     engine:
       type: postgresql
       replicas: 1
       storage:
         size: 10Gi
+    proxy:
+      type: pgbouncer
+      replicas: 2

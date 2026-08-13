@@ -1,68 +1,125 @@
 package provider
 
 import (
+	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
+	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	upstreamv1beta1 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/upstream.pgv2.percona.com/v1beta1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
 	componentTypePostgreSQL = "postgresql"
 	componentTypePGBouncer  = "pgbouncer"
 	componentTypePGBackRest = "pgbackrest"
+
+	// Finalizers applied to the PerconaPGCluster resource to ensure proper
+	// cleanup of dependent resources when the cluster is deleted.
+	// NOTE: percona.com/delete-backups is intentionally omitted. Backup data
+	// deletion is managed per-Backup via CleanupBackup, respecting each
+	// Backup's DeletionPolicy (Delete vs Retain).
+	finalizerDeleteSSL = "percona.com/delete-ssl"
+	finalizerDeletePVC = "percona.com/delete-pvc"
 )
 
 // Compile-time check that Provider implements the required interface.
 var _ controller.ProviderInterface = (*Provider)(nil)
-var _ controller.FieldIndexProvider = (*Provider)(nil)
 
 // Provider implements controller.ProviderInterface for the provider-percona-postgresql provider.
 type Provider struct {
 	controller.BaseProvider
+	client client.Client
+}
+
+// SetClient injects the Kubernetes client into the provider.
+// Must be called after reconciler.New() and before r.Start().
+func (p *Provider) SetClient(c client.Client) {
+	p.client = c
 }
 
 // New creates a new Provider instance.
 func New() *Provider {
-	return &Provider{
-		BaseProvider: controller.BaseProvider{
-			ProviderName: common.ProviderName,
-			SchemeFuncs: []func(*runtime.Scheme) error{
-				pgv2.AddToScheme,
-			},
-			WatchConfigs: []controller.WatchConfig{
-				controller.WatchOwned(&pgv2.PerconaPGCluster{}),
-			},
+	p := &Provider{}
+
+	p.BaseProvider = controller.BaseProvider{
+		ProviderName: common.ProviderName,
+		SchemeFuncs: []func(*runtime.Scheme) error{
+			pgv2.AddToScheme,
+			monitoringv1alpha1.SchemeBuilder.AddToScheme,
+		},
+		WatchConfigs: []controller.WatchConfig{
+			controller.WatchOwned(&pgv2.PerconaPGCluster{}),
+			// Watch operator backups so the PITR window published by
+			// BackupStorageStatuses refreshes as the operator stamps
+			// latestRestorableTime on them. Operator backups are not owned by
+			// the Instance, so map them to the parent via spec.pgCluster.
+			controller.WatchExternal(&pgv2.PerconaPGBackup{},
+				handler.EnqueueRequestsFromMapFunc(enqueueOperatorBackupInstance()),
+			),
+			// Watch Restores so the Instance leaves the Restoring phase as soon
+			// as one reaches a terminal state. Restores are not owned by the
+			// Instance, so map them via spec.instanceRef; without this the
+			// Instance would sit in Restoring until an unrelated event arrived.
+			controller.WatchExternal(&backupv1alpha1.Restore{},
+				handler.EnqueueRequestsFromMapFunc(enqueueRestoreInstance()),
+			),
+			controller.WatchExternal(
+				&monitoringv1alpha1.MonitoringConfig{},
+				handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+					if p.client == nil {
+						return nil
+					}
+
+					mc, ok := obj.(*monitoringv1alpha1.MonitoringConfig)
+					if !ok {
+						return nil
+					}
+
+					instances := &corev1alpha1.InstanceList{}
+					if err := p.client.List(ctx, instances,
+						client.InNamespace(mc.Namespace),
+						client.MatchingFields{monitoringConfigRefFieldPath: mc.Name},
+					); err != nil {
+						return nil
+					}
+
+					requests := make([]reconcile.Request, 0, len(instances.Items))
+					for i := range instances.Items {
+						instance := instances.Items[i]
+						if instance.Spec.ProviderRef.Name != p.Name() {
+							continue
+						}
+						requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&instance)})
+					}
+					return requests
+				}),
+				controller.ResourceVersionChangedPredicate,
+			),
 		},
 	}
+
+	return p
 }
 
 // FieldIndexes registers indexes required by helper queries used in status computation.
 func (p *Provider) FieldIndexes() []controller.FieldIndex {
-	return []controller.FieldIndex{
-		{
-			Object:    &backupv1alpha1.Restore{},
-			FieldPath: controller.IndexRestoreInstanceName,
-			Extractor: func(obj client.Object) []string {
-				restore, ok := obj.(*backupv1alpha1.Restore)
-				if !ok || restore.Spec.InstanceName == "" {
-					return nil
-				}
-				return []string{restore.Spec.InstanceName}
-			},
-		},
-	}
+	return nil
 }
 
 // Validate checks if the Instance spec is valid.
@@ -181,8 +238,8 @@ func (p *Provider) Sync(c *controller.Context) error {
 
 	meta := c.ObjectMeta(c.Name())
 	meta.Finalizers = []string{
-		"percona.com/delete-ssl",
-		"percona.com/delete-pvc",
+		finalizerDeleteSSL,
+		finalizerDeletePVC,
 	}
 	cluster := &pgv2.PerconaPGCluster{
 		ObjectMeta: meta,
@@ -275,11 +332,80 @@ func (p *Provider) Sync(c *controller.Context) error {
 		}
 	}
 
+	if err := applyMonitoringSettings(c, cluster, providerSpec); err != nil {
+		return err
+	}
+
+	// We do NOT set spec.users — the Percona PG operator automatically
+	// creates a default user and database named after the cluster. The
+	// default user is not a superuser, which is required for PGBouncer
+	// authentication (pgbouncer.get_auth() excludes superusers).
+
+	// Automatically remove storages that have no schedules and no Backup CRs
+	// referencing them. This frees repo slots for reuse.
+	if _, err := pruneUnreferencedStorages(c); err != nil {
+		return err
+	}
+
+	// applyBackupSettings may return a BackupConfigError when the backup
+	// configuration is incomplete (e.g. enabled=true but no storages). We
+	// capture this error and defer returning it until after the cluster has
+	// been applied so that the reconciler can still call Status() and update
+	// the Instance phase. The reconciler treats BackupConfigError specially
+	// by setting the BackupConfigured condition to False without marking the
+	// Instance as Failed.
+	var backupConfigErr error
+	if err := applyBackupSettings(c, cluster); err != nil {
+		if controller.AsBackupConfigError(err) == nil {
+			return err
+		}
+		backupConfigErr = err
+		// Preserve the existing cluster's backup configuration so we
+		// don't apply an inconsistent spec (e.g. enabled=true with
+		// zero repos) or accidentally wipe a previously working setup.
+		existing := &pgv2.PerconaPGCluster{}
+		if getErr := c.Get(existing, c.Name()); getErr == nil {
+			cluster.Spec.Backups = existing.Spec.Backups
+		}
+		// If the cluster doesn't exist yet, defaultSpec() already has
+		// backups disabled which is safe.
+	}
+
+	// Preserve backup-related fields set by the PG operator (manual backup
+	// triggers and annotations). Without this the provider would overwrite
+	// them on every reconciliation, preventing on-demand backups from ever
+	// starting.
+	if err := preserveBackupTrigger(c, cluster); err != nil {
+		return err
+	}
+
+	// Preserve the DataSource field set by the PG restore operator. Without
+	// this the provider would overwrite it on every reconciliation, preventing
+	// restores from ever progressing past "Starting".
+	if err := preserveRestoreDataSource(c, cluster); err != nil {
+		return err
+	}
+
+	// Skip applying the cluster spec while a restore is actively running.
+	// The Percona restore controller and the upstream Crunchy operator need
+	// exclusive control over the cluster during the restore process (shutdown,
+	// data directory replacement, restart). Applying our desired spec during
+	// this window can conflict with their changes and cause the restore to
+	// appear successful without actually changing the data.
+	restoring, err := isRestoreRunning(c)
+	if err != nil {
+		return err
+	}
+	if restoring {
+		l.Info("Restore is in progress, skipping cluster apply", "cluster", c.Name())
+		return backupConfigErr
+	}
+
 	if err := c.Apply(cluster); err != nil {
 		return err
 	}
 
-	return nil
+	return backupConfigErr
 }
 
 // Status computes the current status of the database instance.
@@ -349,11 +475,48 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		port = *cluster.Spec.Port
 	}
 
+	// Read the user secret created by the PG operator to obtain credentials.
+	// The secret follows the naming convention: <cluster-name>-pguser-<username>.
+	// The PG operator populates this secret with all connection details including
+	// properly URL-encoded URIs for both direct and PGBouncer connections.
+	var username, password, uri string
+	userSecret := &corev1.Secret{}
+	secretName := c.Name() + "-pguser-" + c.Name()
+	if err := c.Get(userSecret, secretName); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return controller.Status{}, fmt.Errorf("get user secret %q: %w", secretName, err)
+		}
+		l.Info("User secret not found, connection details will not include credentials", "secret", secretName)
+	} else {
+		username = string(userSecret.Data["user"])
+		password = string(userSecret.Data["password"])
+		// Prefer pgbouncer-uri when PGBouncer is enabled, fall back to direct uri.
+		if v := userSecret.Data["pgbouncer-uri"]; len(v) > 0 {
+			uri = string(v)
+		} else if v := userSecret.Data["uri"]; len(v) > 0 {
+			uri = string(v)
+		}
+		// Ensure the URI includes sslmode=require so that clients connect
+		// over TLS. PGBouncer is configured with SSL by the Percona PG
+		// operator and rejects plain-text connections.
+		uri = ensureSSLMode(uri)
+	}
+
+	// Use the pgbouncer-host from the secret if available (it includes the
+	// correct service FQDN for PGBouncer), otherwise fall back to cluster status.
+	host := cluster.Status.Host
+	if v := userSecret.Data["pgbouncer-host"]; len(v) > 0 {
+		host = string(v)
+	}
+
 	return controller.ReadyWithConnectionDetails(controller.ConnectionDetails{
 		Type:     "postgresql",
 		Provider: common.ProviderName,
-		Host:     cluster.Status.Host,
+		Host:     host,
 		Port:     strconv.Itoa(int(port)),
+		Username: username,
+		Password: password,
+		URI:      uri,
 	}), nil
 }
 
@@ -383,6 +546,88 @@ func isPVCResizing(cluster *pgv2.PerconaPGCluster) (bool, error) {
 	return false, nil
 }
 
+// Backup-related annotations set by the Percona PG operator's backup
+// controller. We must preserve these during Sync so that on-demand backups
+// triggered via PerconaPGBackup are not cancelled by the provider
+// overwriting the cluster spec.
+var backupAnnotationKeys = []string{
+	"pgv2.percona.com/pgbackrest-backup",                  // AnnotationPGBackrestBackup
+	"pgv2.percona.com/backup-in-progress",                 // AnnotationBackupInProgress
+	"postgres-operator.crunchydata.com/pgbackrest-backup", // upstream PGBackRestBackup
+}
+
+// preserveBackupTrigger reads the existing PerconaPGCluster and copies
+// backup-related annotations and the Manual backup trigger into the
+// cluster object that is about to be applied. This prevents the provider
+// from overwriting the PG operator's backup trigger on every Sync.
+func preserveBackupTrigger(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
+	existing := &pgv2.PerconaPGCluster{}
+	if err := c.Get(existing, c.Name()); err != nil {
+		// If cluster doesn't exist yet, nothing to preserve.
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get existing PerconaPGCluster for backup trigger: %w", err)
+	}
+
+	// Preserve backup annotations.
+	for _, key := range backupAnnotationKeys {
+		if val, ok := existing.Annotations[key]; ok {
+			if cluster.Annotations == nil {
+				cluster.Annotations = make(map[string]string)
+			}
+			cluster.Annotations[key] = val
+		}
+	}
+
+	// Preserve the Manual backup trigger if one is set.
+	if existing.Spec.Backups.PGBackRest.Manual != nil {
+		cluster.Spec.Backups.PGBackRest.Manual = existing.Spec.Backups.PGBackRest.Manual
+	}
+
+	return nil
+}
+
+// restoreAnnotationKey is the annotation set by the Percona PG restore
+// controller on the PerconaPGCluster to signal an in-place pgBackRest restore.
+const restoreAnnotationKey = "postgres-operator.crunchydata.com/pgbackrest-restore"
+
+// preserveRestoreDataSource reads the existing PerconaPGCluster and copies
+// restore-related fields into the cluster object that is about to be applied.
+// The Percona PG restore operator sets spec.backups.pgBackRest.restore and
+// the pgbackrest-restore annotation to trigger an in-place restore; without
+// preserving these the provider would wipe them on every Sync, leaving the
+// restore stuck in "Starting".
+func preserveRestoreDataSource(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
+	existing := &pgv2.PerconaPGCluster{}
+	if err := c.Get(existing, c.Name()); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get existing PerconaPGCluster for restore state: %w", err)
+	}
+
+	// Preserve the DataSource field (used for bootstrap restores).
+	if existing.Spec.DataSource != nil {
+		cluster.Spec.DataSource = existing.Spec.DataSource
+	}
+
+	// Preserve the pgBackRest Restore field (used for in-place restores).
+	if existing.Spec.Backups.PGBackRest.Restore != nil {
+		cluster.Spec.Backups.PGBackRest.Restore = existing.Spec.Backups.PGBackRest.Restore
+	}
+
+	// Preserve the restore annotation.
+	if val, ok := existing.Annotations[restoreAnnotationKey]; ok {
+		if cluster.Annotations == nil {
+			cluster.Annotations = make(map[string]string)
+		}
+		cluster.Annotations[restoreAnnotationKey] = val
+	}
+
+	return nil
+}
+
 func parseMajorVersion(version string) (int, bool) {
 	if version == "" {
 		return 0, false
@@ -407,6 +652,27 @@ func selectedVersionBundleName(c *controller.Context, spec *corev1alpha1.Provide
 	return controller.GetDefaultVersionBundleName(spec)
 }
 
+// ensureSSLMode appends sslmode=require to the URI query parameters if no
+// sslmode is already specified. PGBouncer deployed by the Percona PG operator
+// mandates TLS; without this parameter clients attempt a plain-text connection
+// first and get rejected with "no such user" / "SSL required".
+func ensureSSLMode(rawURI string) string {
+	if rawURI == "" {
+		return rawURI
+	}
+	parsed, err := url.Parse(rawURI)
+	if err != nil {
+		return rawURI
+	}
+	q := parsed.Query()
+	if q.Get("sslmode") != "" {
+		return rawURI
+	}
+	q.Set("sslmode", "require")
+	parsed.RawQuery = q.Encode()
+	return parsed.String()
+}
+
 // Cleanup handles deletion of provider-managed resources.
 //
 // Called when the Instance has a deletion timestamp set.
@@ -420,8 +686,10 @@ func (p *Provider) Cleanup(c *controller.Context) error {
 	err := c.Get(cluster, c.Name())
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// Cluster is already gone; cleanup is complete.
-			return nil
+			// Cluster is gone. Delete any leftover secrets that survived the
+			// operator's finalizers due to race conditions between the Percona
+			// operator's cleanup and the upstream controller recreating them.
+			return p.deleteLeftoverSecrets(c)
 		}
 		return fmt.Errorf("get PerconaPGCluster %q: %w", c.Name(), err)
 	}
@@ -435,4 +703,30 @@ func (p *Provider) Cleanup(c *controller.Context) error {
 
 	// Keep the Instance finalizer until the managed PG CR is fully removed.
 	return controller.WaitFor("waiting for PerconaPGCluster to be deleted")
+}
+
+// deleteLeftoverSecrets removes secrets created by the PG operator that may
+// survive cluster deletion due to a race condition between the operator's
+// finalizer cleanup and the upstream Crunchy controller reconciling.
+//
+// TODO: Remove this workaround once Percona PG operator 3.1.0 is adopted,
+// which fixes the race upstream: https://perconadev.atlassian.net/browse/K8SPG-1010
+func (p *Provider) deleteLeftoverSecrets(c *controller.Context) error {
+	l := log.FromContext(c.Context())
+
+	secretList := &corev1.SecretList{}
+	if err := c.List(secretList, client.MatchingLabels{
+		"postgres-operator.crunchydata.com/cluster": c.Name(),
+	}); err != nil {
+		return fmt.Errorf("list leftover secrets for cluster %q: %w", c.Name(), err)
+	}
+
+	for i := range secretList.Items {
+		l.Info("Deleting leftover secret", "secret", secretList.Items[i].Name)
+		if err := c.Delete(&secretList.Items[i]); err != nil {
+			return fmt.Errorf("delete leftover secret %q: %w", secretList.Items[i].Name, err)
+		}
+	}
+
+	return nil
 }
