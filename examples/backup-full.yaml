@@ -1,0 +1,17 @@
+# Example: Full backup (explicit).
+# A full backup is a complete self-contained copy of the database.
+# This is the default when no parameters are specified.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: my-full-backup
+spec:
+  instanceRef:
+    name: example-instance
+  classRef:
+    name: pg
+  storageRef:
+    name: my-s3-storage
+  parameters:
+    type: full
+

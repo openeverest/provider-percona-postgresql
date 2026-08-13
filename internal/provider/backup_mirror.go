@@ -581,9 +581,9 @@ func buildPGBackRestSchedules(schedules []corev1alpha1.InstanceBackupSchedule) *
 		switch strings.ToLower(schedule.Name) {
 		case "full":
 			s.Full = &cron
-		case "differential":
+		case "diff":
 			s.Differential = &cron
-		case "incremental":
+		case "incr":
 			s.Incremental = &cron
 		default:
 			// Default unrecognized schedule names to full backup.
@@ -613,9 +613,9 @@ func applyRetentionConfig(globalConfig map[string]string, repoName string, sched
 		case "full", "":
 			globalConfig[repoName+"-retention-full"] = copies
 			globalConfig[repoName+"-retention-full-type"] = "count"
-		case "differential":
+		case "diff":
 			globalConfig[repoName+"-retention-diff"] = copies
-		case "incremental":
+		case "incr":
 			// pgBackRest does not have a separate retention key for
 			// incremental backups — incremental retention is tied to the
 			// full backup retention. Setting full retention here ensures

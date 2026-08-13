@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
@@ -159,6 +160,8 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 			}, nil
 		}
 
+		backupType := resolveBackupType(backup)
+
 		opBackup = &pgv2.PerconaPGBackup{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      backup.Name,
@@ -167,7 +170,7 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 			Spec: pgv2.PerconaPGBackupSpec{
 				PGCluster: backup.Spec.InstanceRef.Name,
 				RepoName:  &repoName,
-				Options:   []string{"--type=full"},
+				Options:   []string{fmt.Sprintf("--type=%s", backupType)},
 			},
 		}
 		if err := ensureBackupControllerReference(opBackup); err != nil {
@@ -269,7 +272,7 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 	if restore.Spec.DataSource.Backup == nil || restore.Spec.DataSource.Backup.BackupRef.Name == "" {
 		return controller.RestoreExecutionStatus{
 			State:              backupv1alpha1.RestoreStateFailed,
-			Message:            "Restore dataSource.backup.backupName is required",
+			Message:            "Restore dataSource.backup.backupRef is required",
 			OperatorRestoreRef: opRef,
 		}, nil
 	}
@@ -644,4 +647,24 @@ func immutableBackupSpecChangeMessage(opBackup *pgv2.PerconaPGBackup, backup *ba
 	}
 
 	return ""
+}
+
+const defaultBackupType = "full"
+
+// resolveBackupType extracts the pgBackRest backup type from the Backup CR's
+// parameters and returns the pgBackRest CLI --type flag value (full/diff/incr).
+func resolveBackupType(backup *backupv1alpha1.Backup) string {
+	if backup.Spec.Parameters == nil || len(backup.Spec.Parameters.Raw) == 0 {
+		return defaultBackupType
+	}
+	var cfg struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(backup.Spec.Parameters.Raw, &cfg); err != nil {
+		return defaultBackupType
+	}
+	if cfg.Type == "" {
+		return defaultBackupType
+	}
+	return cfg.Type
 }
