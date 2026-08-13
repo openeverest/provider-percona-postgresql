@@ -65,6 +65,13 @@ func New() *Provider {
 		},
 		WatchConfigs: []controller.WatchConfig{
 			controller.WatchOwned(&pgv2.PerconaPGCluster{}),
+			// Watch operator backups so the PITR window published by
+			// BackupStorageStatuses refreshes as the operator stamps
+			// latestRestorableTime on them. Operator backups are not owned by
+			// the Instance, so map them to the parent via spec.pgCluster.
+			controller.WatchExternal(&pgv2.PerconaPGBackup{},
+				handler.EnqueueRequestsFromMapFunc(enqueueOperatorBackupInstance()),
+			),
 			controller.WatchExternal(
 				&monitoringv1alpha1.MonitoringConfig{},
 				handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {

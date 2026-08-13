@@ -269,78 +269,12 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 		Name:  restore.Name,
 	}
 
-	if restore.Spec.DataSource.Backup == nil || restore.Spec.DataSource.Backup.BackupRef.Name == "" {
-		return controller.RestoreExecutionStatus{
-			State:              backupv1alpha1.RestoreStateFailed,
-			Message:            "Restore dataSource.backup.backupRef is required",
-			OperatorRestoreRef: opRef,
-		}, nil
-	}
-
-	backupName := restore.Spec.DataSource.Backup.BackupRef.Name
-
-	sourceBackup := &backupv1alpha1.Backup{}
-	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: backupName}, sourceBackup); err != nil {
-		if apierrors.IsNotFound(err) {
-			return controller.RestoreExecutionStatus{
-				State:              backupv1alpha1.RestoreStateFailed,
-				Message:            fmt.Sprintf("source Backup %q not found", backupName),
-				OperatorRestoreRef: opRef,
-			}, nil
-		}
-		return controller.RestoreExecutionStatus{}, fmt.Errorf("get source Backup %q: %w", backupName, err)
-	}
-
-	if sourceBackup.Status.State == backupv1alpha1.BackupStateFailed {
-		return controller.RestoreExecutionStatus{
-			State:              backupv1alpha1.RestoreStateFailed,
-			Message:            "Source Backup failed; cannot restore",
-			OperatorRestoreRef: opRef,
-		}, nil
-	}
-
-	if restore.Spec.DataSource.Backup.PITR != nil {
-		if sourceBackup.Status.State != backupv1alpha1.BackupStateSucceeded {
-			return controller.RestoreExecutionStatus{
-				State:              backupv1alpha1.RestoreStatePending,
-				Message:            "Waiting for source Backup to complete",
-				OperatorRestoreRef: opRef,
-			}, nil
-		}
-	}
-
-	opBackupName := sourceBackup.Name
-
-	// Resolve the repo name and backup set label from the source backup's operator backup.
-	repoName, backupSetName, pending, err := resolveRestoreRepoName(c, restore, opBackupName, opRef)
+	repoName, restoreOptions, pending, err := resolveRestoreSource(c, restore, opRef)
 	if err != nil {
 		return controller.RestoreExecutionStatus{}, err
 	}
 	if pending != nil {
 		return *pending, nil
-	}
-
-	// Build PITR options if requested.
-	restoreOptions, pitrPending, err := desiredPITRRestoreOptions(c, restore, opBackupName, opRef)
-	if err != nil {
-		return controller.RestoreExecutionStatus{}, err
-	}
-	if pitrPending != nil {
-		return *pitrPending, nil
-	}
-
-	// Pin the restore to the specific backup set so pgBackRest does not
-	// simply restore the latest backup in the repo.
-	if backupSetName != "" {
-		restoreOptions = append(restoreOptions, fmt.Sprintf("--set=%s", backupSetName))
-	}
-
-	// When no PITR is requested, use --type=immediate so pgBackRest stops
-	// right after restoring the backup set without replaying WAL files.
-	// Without this, pgBackRest replays all available WAL and the database
-	// ends up at the latest state rather than the backup's point-in-time.
-	if restore.Spec.DataSource.Backup.PITR == nil {
-		restoreOptions = append(restoreOptions, "--type=immediate")
 	}
 
 	opRestore := &pgv2.PerconaPGRestore{}
@@ -442,65 +376,165 @@ func resolveRestoreRepoName(
 	return opBackup.Spec.RepoName, opBackup.Status.BackupName, nil, nil
 }
 
-// desiredPITRRestoreOptions builds pgBackRest restore options for PITR.
-func desiredPITRRestoreOptions(
+// resolveRestoreSource translates the Restore's data source into the operator
+// inputs: the pgBackRest repo to read from and the restore options.
+//
+// A non-nil RestoreExecutionStatus means the source is not usable yet (or at
+// all) and the caller should surface that status verbatim.
+func resolveRestoreSource(
 	c *controller.Context,
 	restore *backupv1alpha1.Restore,
-	opBackupName string,
 	opRef *apicommon.TypedObjectRef,
-) ([]string, *controller.RestoreExecutionStatus, error) {
-	if restore.Spec.DataSource.Backup == nil || restore.Spec.DataSource.Backup.PITR == nil {
-		return nil, nil, nil
-	}
-	pitr := restore.Spec.DataSource.Backup.PITR
-
-	if pitr.Type == backupv1alpha1.PITRTypeDate && pitr.Date == nil {
-		return nil, &controller.RestoreExecutionStatus{
+) (*string, []string, *controller.RestoreExecutionStatus, error) {
+	switch restore.Spec.DataSource.Type {
+	case backupv1alpha1.DataSourceTypeBackup:
+		return resolveBackupSource(c, restore, opRef)
+	case backupv1alpha1.DataSourceTypePointInTime:
+		return resolvePointInTimeSource(c, restore, opRef)
+	default:
+		return nil, nil, &controller.RestoreExecutionStatus{
 			State:              backupv1alpha1.RestoreStateFailed,
-			Message:            "Restore dataSource.pitr.date is required when pitr.type is \"date\"",
+			Message:            fmt.Sprintf("Unsupported dataSource type %q", restore.Spec.DataSource.Type),
+			OperatorRestoreRef: opRef,
+		}, nil
+	}
+}
+
+// resolveBackupSource restores the state captured by a named Backup CR. The
+// restore is pinned to the backup's pgBackRest set label and stops right after
+// restoring it (--type=immediate) so no WAL is replayed past the backup's
+// point-in-time.
+func resolveBackupSource(
+	c *controller.Context,
+	restore *backupv1alpha1.Restore,
+	opRef *apicommon.TypedObjectRef,
+) (*string, []string, *controller.RestoreExecutionStatus, error) {
+	ref := restore.Spec.DataSource.Backup
+	if ref == nil || ref.BackupRef.Name == "" {
+		return nil, nil, &controller.RestoreExecutionStatus{
+			State:              backupv1alpha1.RestoreStateFailed,
+			Message:            "Restore dataSource.backup.backupRef is required",
 			OperatorRestoreRef: opRef,
 		}, nil
 	}
 
-	opBackup := &pgv2.PerconaPGBackup{}
-	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: opBackupName}, opBackup); err != nil {
+	sourceBackup := &backupv1alpha1.Backup{}
+	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: ref.BackupRef.Name}, sourceBackup); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, &controller.RestoreExecutionStatus{
+			return nil, nil, &controller.RestoreExecutionStatus{
 				State:              backupv1alpha1.RestoreStatePending,
-				Message:            "Waiting for operator backup",
+				Message:            "Waiting for source Backup",
 				OperatorRestoreRef: opRef,
 			}, nil
 		}
-		return nil, nil, fmt.Errorf("get operator backup %q: %w", opBackupName, err)
+		return nil, nil, nil, fmt.Errorf("get source Backup %q: %w", ref.BackupRef.Name, err)
 	}
 
-	if opBackup.Status.State == pgv2.BackupFailed {
-		message := "Operator backup failed; cannot run PITR"
-		if opBackup.Status.Error != "" {
-			message = opBackup.Status.Error
-		}
-		return nil, &controller.RestoreExecutionStatus{
+	if sourceBackup.Status.State == backupv1alpha1.BackupStateFailed {
+		return nil, nil, &controller.RestoreExecutionStatus{
 			State:              backupv1alpha1.RestoreStateFailed,
-			Message:            message,
+			Message:            "Source Backup failed; cannot restore",
 			OperatorRestoreRef: opRef,
 		}, nil
 	}
-	if opBackup.Status.State != pgv2.BackupSucceeded {
-		return nil, &controller.RestoreExecutionStatus{
+
+	// Resolve the repo name and backup set label from the source backup's operator backup.
+	repoName, backupSetName, pending, err := resolveRestoreRepoName(c, restore, sourceBackup.Name, opRef)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if pending != nil {
+		return nil, nil, pending, nil
+	}
+
+	var options []string
+	// Pin the restore to the specific backup set so pgBackRest does not
+	// simply restore the latest backup in the repo.
+	if backupSetName != "" {
+		options = append(options, fmt.Sprintf("--set=%s", backupSetName))
+	}
+	// Stop right after restoring the backup set without replaying WAL files.
+	// Without this, pgBackRest replays all available WAL and the database
+	// ends up at the latest state rather than the backup's point-in-time.
+	options = append(options, "--type=immediate")
+
+	return repoName, options, nil, nil
+}
+
+// resolvePointInTimeSource rolls the WAL stream forward to a recovery target.
+//
+// The client names the stream (source Instance + storage) and the target,
+// never a backup: pgBackRest selects the base backup itself when no --set is
+// given, so unlike PSMDB and PXC no base selection happens here. The storage
+// maps to the pgBackRest repo the WAL is archived to.
+func resolvePointInTimeSource(
+	c *controller.Context,
+	restore *backupv1alpha1.Restore,
+	opRef *apicommon.TypedObjectRef,
+) (*string, []string, *controller.RestoreExecutionStatus, error) {
+	pitr := restore.Spec.DataSource.PointInTime
+	if pitr == nil {
+		return nil, nil, &controller.RestoreExecutionStatus{
+			State:              backupv1alpha1.RestoreStateFailed,
+			Message:            "Restore dataSource.pointInTime is required when type is \"PointInTime\"",
+			OperatorRestoreRef: opRef,
+		}, nil
+	}
+	// A schema rule already enforces this; repeated for paths that bypass
+	// admission.
+	if pitr.RecoveryTarget == backupv1alpha1.RecoveryTargetDate && pitr.Date == nil {
+		return nil, nil, &controller.RestoreExecutionStatus{
+			State:              backupv1alpha1.RestoreStateFailed,
+			Message:            "Restore dataSource.pointInTime.date is required when recoveryTarget is \"date\"",
+			OperatorRestoreRef: opRef,
+		}, nil
+	}
+
+	// A PerconaPGRestore reads from a repo registered on the target cluster,
+	// and repo paths embed the owning cluster's identity -- another Instance's
+	// WAL stream is not reachable through them.
+	if pitr.Source.InstanceRef != nil && pitr.Source.InstanceRef.Name != restore.Spec.InstanceRef.Name {
+		return nil, nil, &controller.RestoreExecutionStatus{
+			State:              backupv1alpha1.RestoreStateFailed,
+			Message:            "This provider only supports point-in-time recovery of the target Instance's own stream",
+			OperatorRestoreRef: opRef,
+		}, nil
+	}
+
+	pgCluster := &pgv2.PerconaPGCluster{}
+	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: restore.Spec.InstanceRef.Name}, pgCluster); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil, &controller.RestoreExecutionStatus{
+				State:              backupv1alpha1.RestoreStatePending,
+				Message:            fmt.Sprintf("Waiting for PerconaPGCluster %q", restore.Spec.InstanceRef.Name),
+				OperatorRestoreRef: opRef,
+			}, nil
+		}
+		return nil, nil, nil, fmt.Errorf("get PerconaPGCluster %q: %w", restore.Spec.InstanceRef.Name, err)
+	}
+
+	repoName, found := storageNameToRepoName(c, pitr.Source.StorageRef.Name, pgCluster)
+	if !found || !hasRepo(pgCluster, repoName) {
+		return nil, nil, &controller.RestoreExecutionStatus{
 			State:              backupv1alpha1.RestoreStatePending,
-			Message:            "Waiting for operator backup to complete",
+			Message:            fmt.Sprintf("Waiting for storage %q to be configured on the instance", pitr.Source.StorageRef.Name),
 			OperatorRestoreRef: opRef,
 		}, nil
 	}
 
-	// pgBackRest PITR is configured via --type and --target options.
-	var opts []string
-	opts = append(opts, "--type=time")
-	if pitr.Date != nil {
-		opts = append(opts, fmt.Sprintf("--target=%q", pitr.Date.UTC().Format("2006-01-02 15:04:05")))
+	// No --set: pgBackRest selects the base backup for the target itself.
+	// For "latest" no options are needed either -- the default recovery type
+	// replays the WAL stream to its end.
+	var options []string
+	if pitr.RecoveryTarget == backupv1alpha1.RecoveryTargetDate {
+		// PostgreSQL interprets timezone-less timestamps as node-local time,
+		// so the offset is always emitted.
+		options = append(options,
+			"--type=time",
+			fmt.Sprintf("--target=%q", pitr.Date.UTC().Format("2006-01-02 15:04:05-07:00")))
 	}
 
-	return opts, nil, nil
+	return &repoName, options, nil, nil
 }
 
 // CleanupBackup deletes the operator backup resource.
