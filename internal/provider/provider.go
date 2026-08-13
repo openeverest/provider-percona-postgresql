@@ -72,6 +72,13 @@ func New() *Provider {
 			controller.WatchExternal(&pgv2.PerconaPGBackup{},
 				handler.EnqueueRequestsFromMapFunc(enqueueOperatorBackupInstance()),
 			),
+			// Watch Restores so the Instance leaves the Restoring phase as soon
+			// as one reaches a terminal state. Restores are not owned by the
+			// Instance, so map them via spec.instanceRef; without this the
+			// Instance would sit in Restoring until an unrelated event arrived.
+			controller.WatchExternal(&backupv1alpha1.Restore{},
+				handler.EnqueueRequestsFromMapFunc(enqueueRestoreInstance()),
+			),
 			controller.WatchExternal(
 				&monitoringv1alpha1.MonitoringConfig{},
 				handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {

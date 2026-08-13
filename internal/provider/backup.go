@@ -11,6 +11,7 @@ import (
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -684,6 +685,23 @@ func immutableBackupSpecChangeMessage(opBackup *pgv2.PerconaPGBackup, backup *ba
 }
 
 const defaultBackupType = "full"
+
+// enqueueRestoreInstance maps a Restore event to a reconcile request for the
+// Instance it targets, so the Instance phase tracks the restore's lifecycle.
+func enqueueRestoreInstance() func(ctx context.Context, obj client.Object) []reconcile.Request {
+	return func(_ context.Context, obj client.Object) []reconcile.Request {
+		r, ok := obj.(*backupv1alpha1.Restore)
+		if !ok || r.Spec.InstanceRef.Name == "" {
+			return nil
+		}
+		return []reconcile.Request{{
+			NamespacedName: types.NamespacedName{
+				Namespace: r.Namespace,
+				Name:      r.Spec.InstanceRef.Name,
+			},
+		}}
+	}
+}
 
 // resolveBackupType extracts the pgBackRest backup type from the Backup CR's
 // parameters and returns the pgBackRest CLI --type flag value (full/diff/incr).
