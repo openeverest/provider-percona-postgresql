@@ -120,3 +120,5 @@ leaderElection:
 # Values for the Percona PostgreSQL operator subchart.
 pg-operator:
   enabled: true
+  # -- Watch Instances in all namespaces, matching PSMDB/PXC providers
+  watchAllNamespaces: true
