@@ -139,7 +139,7 @@ func (p *Provider) Validate(c *controller.Context) error {
 	}
 
 	bundleComponents := map[string]string{}
-	bundleName := selectedVersionBundleName(c, providerSpec)
+	bundleName := controller.EffectiveVersionBundleName(providerSpec, c.Instance())
 	if bundleName != "" {
 		bundle, err := controller.ResolveVersionBundle(providerSpec, bundleName)
 		if err != nil {
@@ -252,7 +252,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 	}
 
 	bundleComponents := map[string]string{}
-	bundleName := selectedVersionBundleName(c, providerSpec)
+	bundleName := controller.EffectiveVersionBundleName(providerSpec, c.Instance())
 	if bundleName != "" {
 		bundle, err := controller.ResolveVersionBundle(providerSpec, bundleName)
 		if err != nil {
@@ -640,16 +640,6 @@ func parseMajorVersion(version string) (int, bool) {
 	}
 
 	return major, true
-}
-
-func selectedVersionBundleName(c *controller.Context, spec *corev1alpha1.ProviderSpec) string {
-	if c.Instance().Spec.Version != "" {
-		return c.Instance().Spec.Version
-	}
-	if c.Instance().Status.Version != "" {
-		return c.Instance().Status.Version
-	}
-	return controller.GetDefaultVersionBundleName(spec)
 }
 
 // ensureSSLMode appends sslmode=require to the URI query parameters if no
