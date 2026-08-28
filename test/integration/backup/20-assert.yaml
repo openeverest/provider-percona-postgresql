@@ -1,4 +1,6 @@
-# Assert the Instance and PerconaPGCluster are created.
+# Assert the Instance and PerconaPGCluster are created with the expected spec.
+# Note: postgresVersion is omitted because it depends on the operator
+# image bundle and may change between releases.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
@@ -11,5 +13,12 @@ apiVersion: pgv2.percona.com/v2
 kind: PerconaPGCluster
 metadata:
   name: test-backup-instance
+spec:
+  instances:
+    - name: instance1
+      replicas: 1
+  proxy:
+    pgBouncer:
+      replicas: 1
 
 
