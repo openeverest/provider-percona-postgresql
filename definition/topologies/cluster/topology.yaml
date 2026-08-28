@@ -18,9 +18,7 @@ config:
             type: pgbouncer
             replicas: 2
         monitoring:
-            type: pmm
             optional: true
-            parametersSchema: PmmParameters
 ui:
     sections:
         databaseVersion:
