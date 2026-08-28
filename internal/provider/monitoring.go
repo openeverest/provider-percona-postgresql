@@ -10,6 +10,7 @@ import (
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
+	"github.com/openeverest/provider-percona-postgresql/definition/components"
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -22,10 +23,6 @@ const (
 	monitoringConfigAPIKeyKey    = "apiKey"
 	pgPMMServerToken             = "PMM_SERVER_TOKEN"
 )
-
-type pmmCustomSpec struct {
-	MonitoringConfigName *string `json:"monitoringConfigName,omitempty"`
-}
 
 func applyMonitoringSettings(c *controller.Context, cluster *pgv2.PerconaPGCluster, providerSpec *corev1alpha1.ProviderSpec) error {
 	monitoringComponent, ok := c.Instance().Spec.Components[common.ComponentMonitoring]
@@ -93,7 +90,7 @@ func monitoringConfigNameFromComponent(component corev1alpha1.ComponentSpec) (st
 		return "", nil
 	}
 
-	cfg := &pmmCustomSpec{}
+	cfg := &components.PmmParameters{}
 	if err := json.Unmarshal(component.Parameters.Raw, cfg); err != nil {
 		return "", fmt.Errorf("decode monitoring component parameters: %w", err)
 	}
