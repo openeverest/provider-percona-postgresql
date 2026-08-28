@@ -17,6 +17,8 @@ config:
         proxy:
             type: pgbouncer
             replicas: 2
+        monitoring:
+            optional: true
 ui:
     sections:
         databaseVersion:
@@ -55,7 +57,7 @@ ui:
                             fieldParams:
                                 label: CPU
                                 defaultValue: 1
-                            path: spec.components.engine.resources.requests.cpu
+                            path: spec.components.engine.resources.limits.cpu
                             uiType: number
                             validation:
                                 min: 1
@@ -75,7 +77,7 @@ ui:
                                 defaultValue: 2
                                 badge: Gi
                                 badgeToApi: true
-                            path: spec.components.engine.resources.requests.memory
+                            path: spec.components.engine.resources.limits.memory
                             uiType: number
                             validation:
                                 min: 1

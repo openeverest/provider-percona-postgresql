@@ -94,7 +94,7 @@ require (
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
-	github.com/openeverest/provider-sdk v0.1.1-0.20260825120416-61bf572d2c47 // indirect
+	github.com/openeverest/provider-sdk v0.1.1-0.20260827074057-252e196e9e5a // indirect
 	github.com/percona/everest-operator v0.6.0-dev1.0.20260429065444-70caa52c384a // indirect
 	github.com/percona/percona-backup-mongodb v1.8.1-0.20251104101930-05ab6d7e1004 // indirect
 	github.com/percona/percona-server-mongodb-operator v1.22.0 // indirect
@@ -164,7 +164,3 @@ require (
 
 tool github.com/openeverest/provider-sdk
 
-// TODO: Add your operator dependency, e.g.:
-// require github.com/example/my-operator v1.0.0
-//
-// Then run: go mod tidy

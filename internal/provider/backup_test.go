@@ -71,8 +71,10 @@ func TestResolvePointInTimeSource(t *testing.T) {
 		}
 	}
 	newCtx := func() *controller.Context {
-		k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance, pgCluster).Build()
-		return controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+		inst := instance.DeepCopy()
+		pg := pgCluster.DeepCopy()
+		k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(inst, pg).Build()
+		return controller.NewContext(context.Background(), k8sClient, inst, "provider-percona-postgresql")
 	}
 
 	t.Run("date target maps storage to repo and emits offset", func(t *testing.T) {
