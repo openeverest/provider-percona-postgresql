@@ -1,0 +1,14 @@
+# Create a restore from the completed backup.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Restore
+metadata:
+  name: test-restore-from-backup
+spec:
+  instanceRef:
+    name: test-backup-instance
+  dataSource:
+    type: Backup
+    backup:
+      backupRef:
+        name: test-full-backup
+
