@@ -11,13 +11,15 @@ spec:
   providerRef:
     name: provider-percona-postgresql
 ---
+# Assert the PerconaPGCluster CR produced by Sync().
+# Note: postgresVersion is omitted because it depends on the operator
+# image bundle and may change between releases.
 apiVersion: pgv2.percona.com/v2
 kind: PerconaPGCluster
 metadata:
   name: test-instance
 spec:
-  postgresVersion: 16
-  instanceSets:
+  instances:
     - name: instance1
       replicas: 1
   proxy:

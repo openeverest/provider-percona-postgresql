@@ -6,4 +6,4 @@ kind: Instance
 metadata:
   name: test-instance
 status:
-  phase: Running
+  phase: Ready
