@@ -1,0 +1,69 @@
+---
+# Monitoring suite — tests that an Instance with a monitoring component
+# correctly configures PMM settings on the PerconaPGCluster.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: monitoring
+spec:
+  description: |
+    Verify that an Instance with a PMM monitoring component creates the
+    correct PMM configuration on the PerconaPGCluster, syncs the
+    credentials secret, and tears down cleanly.
+
+  # Collect diagnostics when a step fails.
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get perconapgcluster -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get secret -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get monitoringconfig -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-percona-postgresql
+        tail: 100
+
+  steps:
+    - name: provider-deployed
+      try:
+        - assert:
+            file: 00-assert.yaml
+
+    - name: create-monitoring-config
+      try:
+        - apply:
+            file: 10-create-monitoring-config.yaml
+
+    - name: create-instance-with-monitoring
+      try:
+        - apply:
+            file: 20-create-instance.yaml
+        - assert:
+            file: 20-assert.yaml
+
+    - name: instance-ready
+      try:
+        - script:
+            content: |
+              kubectl patch perconapgcluster/test-monitoring-instance --subresource status -n $NAMESPACE \
+                -p '{"status":{"state":"ready","postgres":{"ready":1,"size":1},"pgbouncer":{"ready":1,"size":1},"observedGeneration":1}}' --type=merge
+        - assert:
+            file: 21-assert.yaml
+
+    - name: delete-instance
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE delete instance/test-monitoring-instance --wait=false
+              kubectl -n $NAMESPACE patch perconapgcluster/test-monitoring-instance \
+                -p '{"metadata":{"finalizers":null}}' --type merge
+        - wait:
+            apiVersion: core.openeverest.io/v1alpha1
+            kind: Instance
+            name: test-monitoring-instance
+            for:
+              deletion: {}
+

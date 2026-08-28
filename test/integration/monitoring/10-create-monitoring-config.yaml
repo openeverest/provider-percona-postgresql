@@ -1,0 +1,21 @@
+# Create the PMM credentials Secret and MonitoringConfig resource
+# that the Instance will reference.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pmm-credentials
+type: Opaque
+stringData:
+  apiKey: test-pmm-api-key
+---
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringConfig
+metadata:
+  name: test-pmm
+spec:
+  type: pmm
+  pmm:
+    url: http://pmm-server.monitoring:443
+    credentialsSecretRef:
+      name: pmm-credentials
+
