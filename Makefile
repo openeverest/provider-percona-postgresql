@@ -60,9 +60,6 @@ run: generate ## Run the provider locally.
 lint: golangci-lint ## Run golangci-lint.
 	$(GOLANGCI_LINT) run --timeout=5m
 
-.PHONY: test
-test: ## Run unit tests.
-	go test ./... -coverprofile cover.out
 
 ##@ Code Generation
 
