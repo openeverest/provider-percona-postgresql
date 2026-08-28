@@ -17,6 +17,10 @@ config:
         proxy:
             type: pgbouncer
             replicas: 2
+        monitoring:
+            type: pmm
+            optional: true
+            parametersSchema: PmmParameters
 ui:
     sections:
         databaseVersion:
@@ -55,7 +59,7 @@ ui:
                             fieldParams:
                                 label: CPU
                                 defaultValue: 1
-                            path: spec.components.engine.resources.requests.cpu
+                            path: spec.components.engine.resources.limits.cpu
                             uiType: number
                             validation:
                                 min: 1
