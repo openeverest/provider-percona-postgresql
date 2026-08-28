@@ -1,0 +1,25 @@
+# Expected outcome of the create-instance step.
+#
+# Assert both the accepted Instance spec and the operator-native CR the
+# provider must create from it. Chainsaw asserts are partial: only the
+# fields listed here are checked.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: test-instance
+spec:
+  postgresVersion: 16
+  instanceSets:
+    - name: instance1
+      replicas: 1
+  proxy:
+    pgBouncer:
+      replicas: 1
