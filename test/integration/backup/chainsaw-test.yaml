@@ -1,0 +1,104 @@
+---
+# Backup lifecycle suite — tests backup create, completion, and delete.
+# Requires a live PG operator (deployed by the Helm chart).
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: backup
+spec:
+  description: |
+    Lifecycle of a Backup: create an Instance with backup storage,
+    wait for the cluster to become ready, trigger a full backup,
+    wait for completion, verify status, and clean up.
+
+  # Increase timeouts for steps that wait on the real operator.
+  timeouts:
+    assert: 600s
+    exec: 60s
+    cleanup: 120s
+    delete: 120s
+
+  # Collect diagnostics when a step fails.
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,backup,backupstorage -o yaml
+    - script:
+        content: kubectl -n $NAMESPACE get perconapgcluster,perconapgbackup -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-percona-postgresql
+        tail: 100
+
+  steps:
+    - name: provider-deployed
+      try:
+        - assert:
+            file: 00-assert.yaml
+
+    - name: create-backup-storage
+      try:
+        - apply:
+            file: 10-backup-storage.yaml
+
+    - name: create-instance
+      try:
+        - apply:
+            file: 20-create-instance.yaml
+        - assert:
+            file: 20-assert.yaml
+
+    - name: instance-ready
+      try:
+        # Wait for the Instance to become Ready (the real operator will
+        # initialize the cluster, create stanzas, etc.).
+        - assert:
+            file: 21-assert.yaml
+
+    - name: create-backup
+      try:
+        - apply:
+            file: 30-create-backup.yaml
+        - assert:
+            file: 30-assert.yaml
+
+    - name: backup-succeeded
+      try:
+        # Wait for the backup to complete (the real operator runs it).
+        - assert:
+            file: 31-assert.yaml
+
+    - name: delete-backup
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE delete backup/test-full-backup --wait=false
+              # Clear finalizers on PerconaPGBackup if the operator hasn't
+              # processed the deletion yet.
+              kubectl -n $NAMESPACE patch perconapgbackup/test-full-backup \
+                -p '{"metadata":{"finalizers":null}}' --type merge 2>/dev/null || true
+        - wait:
+            apiVersion: backup.openeverest.io/v1alpha1
+            kind: Backup
+            name: test-full-backup
+            for:
+              deletion: {}
+
+    - name: cleanup-instance
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              kubectl -n $NAMESPACE delete instance/test-backup-instance --wait=false
+              kubectl -n $NAMESPACE patch perconapgcluster/test-backup-instance \
+                -p '{"metadata":{"finalizers":null}}' --type merge 2>/dev/null || true
+              # Clean up operator-managed resources that block namespace deletion.
+              kubectl -n $NAMESPACE delete sts,deploy,rs,pods,pvc,svc,secrets,configmaps --all --wait=false 2>/dev/null || true
+        - wait:
+            apiVersion: core.openeverest.io/v1alpha1
+            kind: Instance
+            name: test-backup-instance
+            for:
+              deletion: {}
+
+
+

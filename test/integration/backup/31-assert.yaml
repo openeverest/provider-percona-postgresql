@@ -1,0 +1,8 @@
+# Assert the Backup reports Succeeded after simulating operator completion.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: test-full-backup
+status:
+  state: Succeeded
+

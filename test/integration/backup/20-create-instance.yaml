@@ -1,0 +1,37 @@
+# Instance with backup storage configured.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-backup-instance
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  components:
+    engine:
+      type: postgresql
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 1G
+        requests:
+          cpu: 500m
+          memory: 512M
+      storage:
+        size: 1Gi
+    proxy:
+      type: pgbouncer
+      replicas: 1
+      resources:
+        limits:
+          cpu: 200m
+          memory: 128Mi
+  backup:
+    enabled: true
+    classRef:
+      name: pg
+    storages:
+      - storageRef:
+          name: minio-s3
+
+
