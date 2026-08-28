@@ -1,5 +1,6 @@
 ---
-# Backup lifecycle suite — tests backup create, completion, and delete.
+# Backup & Restore lifecycle suite — tests backup create, completion,
+# restore from backup, restore completion, and clean up.
 # Requires a live PG operator (deployed by the Helm chart).
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
@@ -7,9 +8,10 @@ metadata:
   name: backup
 spec:
   description: |
-    Lifecycle of a Backup: create an Instance with backup storage,
+    Lifecycle of a Backup and Restore: create an Instance with backup storage,
     wait for the cluster to become ready, trigger a full backup,
-    wait for completion, verify status, and clean up.
+    wait for completion, restore from that backup, wait for the restore
+    to succeed, verify status, and clean up.
 
   # Increase timeouts for steps that wait on the real operator.
   timeouts:
@@ -21,9 +23,9 @@ spec:
   # Collect diagnostics when a step fails.
   catch:
     - script:
-        content: kubectl -n $NAMESPACE get instance,backup,backupstorage -o yaml
+        content: kubectl -n $NAMESPACE get instance,backup,restore,backupstorage -o yaml
     - script:
-        content: kubectl -n $NAMESPACE get perconapgcluster,perconapgbackup -o yaml
+        content: kubectl -n $NAMESPACE get perconapgcluster,perconapgbackup,perconapgrestore -o yaml
     - podLogs:
         namespace: provider-system
         selector: app.kubernetes.io/name=provider-percona-postgresql
@@ -66,6 +68,35 @@ spec:
         # Wait for the backup to complete (the real operator runs it).
         - assert:
             file: 31-assert.yaml
+
+    - name: create-restore
+      try:
+        - apply:
+            file: 40-create-restore.yaml
+        - assert:
+            file: 40-assert.yaml
+
+    - name: restore-succeeded
+      try:
+        # Wait for the restore to complete (the real operator runs it).
+        - assert:
+            file: 41-assert.yaml
+
+    - name: delete-restore
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE delete restore/test-restore-from-backup --wait=false
+              # Clear finalizers on PerconaPGRestore if the operator hasn't
+              # processed the deletion yet.
+              kubectl -n $NAMESPACE patch perconapgrestore/test-restore-from-backup \
+                -p '{"metadata":{"finalizers":null}}' --type merge 2>/dev/null || true
+        - wait:
+            apiVersion: backup.openeverest.io/v1alpha1
+            kind: Restore
+            name: test-restore-from-backup
+            for:
+              deletion: {}
 
     - name: delete-backup
       try:

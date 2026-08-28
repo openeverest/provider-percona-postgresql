@@ -1,0 +1,8 @@
+# Assert the provider created the PerconaPGRestore for the instance.
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGRestore
+metadata:
+  name: test-restore-from-backup
+spec:
+  pgCluster: test-backup-instance
+
