@@ -79,7 +79,7 @@ ui:
                                 defaultValue: 2
                                 badge: Gi
                                 badgeToApi: true
-                            path: spec.components.engine.resources.requests.memory
+                            path: spec.components.engine.resources.limits.memory
                             uiType: number
                             validation:
                                 min: 1

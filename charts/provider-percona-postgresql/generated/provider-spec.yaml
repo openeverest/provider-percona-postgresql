@@ -187,7 +187,7 @@ spec:
                     badgeToApi: true
                     defaultValue: 2
                     label: Memory
-                  path: spec.components.engine.resources.requests.memory
+                  path: spec.components.engine.resources.limits.memory
                   uiType: number
                   validation:
                     min: 1
