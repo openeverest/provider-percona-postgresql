@@ -69,6 +69,12 @@ spec:
     engine:
       type: postgresql
     monitoring:
+      parametersSchema:
+        openAPIV3Schema:
+          properties:
+            monitoringConfigName:
+              type: string
+          type: object
       type: pmm
     proxy:
       type: pgbouncer
@@ -76,6 +82,8 @@ spec:
     cluster:
       components:
         engine: {}
+        monitoring:
+          optional: true
         proxy: {}
       parametersSchema:
         openAPIV3Schema:
@@ -159,7 +167,7 @@ spec:
                   fieldParams:
                     defaultValue: 1
                     label: CPU
-                  path: spec.components.engine.resources.requests.cpu
+                  path: spec.components.engine.resources.limits.cpu
                   uiType: number
                   validation:
                     min: 1
@@ -179,7 +187,7 @@ spec:
                     badgeToApi: true
                     defaultValue: 2
                     label: Memory
-                  path: spec.components.engine.resources.requests.memory
+                  path: spec.components.engine.resources.limits.memory
                   uiType: number
                   validation:
                     min: 1

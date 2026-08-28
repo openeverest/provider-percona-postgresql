@@ -9,4 +9,5 @@ components:
         type: pgbouncer
     monitoring:
         type: pmm
+        parametersSchema: PmmParameters
 name: provider-percona-postgresql
