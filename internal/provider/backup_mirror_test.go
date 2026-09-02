@@ -72,7 +72,8 @@ func TestMirrorScheduledBackup(t *testing.T) {
 	require.NotNil(t, mirror, "should create a Backup CR for scheduled backup")
 	require.Equal(t, "full", mirror.Spec.ScheduleName, "schedule name should be derived from backup name")
 	require.Equal(t, "my-storage", mirror.Spec.StorageRef.Name, "storage name should be resolved from slot map")
-	require.Equal(t, "inst-0hc", mirror.Spec.InstanceRef.Name)
+	require.Equal(t, backupv1alpha1.BackupOriginTypeInstance, mirror.Spec.Origin.Type)
+	require.Equal(t, "inst-0hc", mirror.Spec.Origin.InstanceRef.Name)
 	require.Equal(t, "pg", mirror.Spec.ClassRef.Name)
 	require.Len(t, mirror.OwnerReferences, 1)
 	owner := mirror.OwnerReferences[0]
@@ -666,9 +667,12 @@ func TestPruneUnreferencedStorages_RemovesOrphanedStorage(t *testing.T) {
 	backup := &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: "backup-1", Namespace: "default"},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceRef: apicommon.ObjectRef{Name: "my-pg"},
-			ClassRef:    apicommon.ObjectRef{Name: "pg"},
-			StorageRef:  apicommon.ObjectRef{Name: "referenced-storage"},
+			Origin: backupv1alpha1.BackupOrigin{
+				Type:        backupv1alpha1.BackupOriginTypeInstance,
+				InstanceRef: &apicommon.ObjectRef{Name: "my-pg"},
+			},
+			ClassRef:   apicommon.ObjectRef{Name: "pg"},
+			StorageRef: apicommon.ObjectRef{Name: "referenced-storage"},
 		},
 	}
 
@@ -676,7 +680,7 @@ func TestPruneUnreferencedStorages_RemovesOrphanedStorage(t *testing.T) {
 		WithScheme(scheme).
 		WithObjects(instance, backup).
 		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
-			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceRef.Name}
+			return []string{obj.(*backupv1alpha1.Backup).Spec.Origin.InstanceRef.Name}
 		}).
 		Build()
 
@@ -731,9 +735,12 @@ func TestPruneUnreferencedStorages_NoPruneWhenAllReferenced(t *testing.T) {
 	backup := &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: "backup-1", Namespace: "default"},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceRef: apicommon.ObjectRef{Name: "my-pg"},
-			ClassRef:    apicommon.ObjectRef{Name: "pg"},
-			StorageRef:  apicommon.ObjectRef{Name: "storage-with-backup"},
+			Origin: backupv1alpha1.BackupOrigin{
+				Type:        backupv1alpha1.BackupOriginTypeInstance,
+				InstanceRef: &apicommon.ObjectRef{Name: "my-pg"},
+			},
+			ClassRef:   apicommon.ObjectRef{Name: "pg"},
+			StorageRef: apicommon.ObjectRef{Name: "storage-with-backup"},
 		},
 	}
 
@@ -741,7 +748,7 @@ func TestPruneUnreferencedStorages_NoPruneWhenAllReferenced(t *testing.T) {
 		WithScheme(scheme).
 		WithObjects(instance, backup).
 		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
-			return []string{obj.(*backupv1alpha1.Backup).Spec.InstanceRef.Name}
+			return []string{obj.(*backupv1alpha1.Backup).Spec.Origin.InstanceRef.Name}
 		}).
 		Build()
 
