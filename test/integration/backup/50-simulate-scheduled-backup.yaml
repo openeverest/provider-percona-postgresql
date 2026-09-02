@@ -1,0 +1,16 @@
+# Simulate the PG operator firing a scheduled full backup on repo2
+# (the scheduled storage). The operator creates PerconaPGBackup CRs with
+# generateName for scheduled backups, and sets the job-type annotation
+# to "manual".
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGBackup
+metadata:
+  name: test-backup-instance-repo2-full-xyz12
+  generateName: test-backup-instance-repo2-full-
+  annotations:
+    pgv2.percona.com/pgbackrest-backup-job-type: manual
+spec:
+  pgCluster: test-backup-instance
+  repoName: repo2
+
+

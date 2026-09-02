@@ -1,0 +1,23 @@
+# Assert the backup mirror created a Backup CR for the scheduled operator
+# backup on repo2. The Backup CR should have the schedule name derived from
+# the operator backup name ("full"), reference the correct instance and the
+# scheduled storage (minio-s3-scheduled / bucket-2), and carry an owner
+# reference back to the PerconaPGBackup.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: test-backup-instance-repo2-full-xyz12
+  ownerReferences:
+    - apiVersion: pgv2.percona.com/v2
+      kind: PerconaPGBackup
+      name: test-backup-instance-repo2-full-xyz12
+spec:
+  instanceRef:
+    name: test-backup-instance
+  classRef:
+    name: pg
+  storageRef:
+    name: minio-s3-scheduled
+  scheduleName: full
+
+
