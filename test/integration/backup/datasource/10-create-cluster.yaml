@@ -1,0 +1,38 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: src-pg-cluster
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  backup:
+    enabled: true
+    classRef:
+      name: pg
+    storages:
+    - storageRef:
+        name: test-storage-s3
+      # A schedule is required: the provider prunes storages that have neither
+      # schedules nor Backup CRs, which would disable backups before the
+      # on-demand Backup in this suite is created.
+      schedules:
+      - name: full
+        enabled: true
+        cron: "0 2 * * *"
+  components:
+    engine:
+      type: postgresql
+      replicas: 3
+      resources:
+        limits:
+          cpu: "1"
+          memory: 4G
+        requests:
+          cpu: 500m
+          memory: 2G
+      storage:
+        size: 25Gi
+        storageClass: standard
+    proxy:
+      type: pgbouncer
+      replicas: 1

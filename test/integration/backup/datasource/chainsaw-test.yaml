@@ -1,0 +1,167 @@
+---
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: backup-datasource
+spec:
+  description: |
+    Restore from a backup into a new Instance: create a source cluster with
+    backups enabled, take a backup, create a destination cluster from that
+    backup, and verify the datasource Restore is created.
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com,backup,perconapgbackups.pgv2.percona.com,restore,perconapgrestores.pgv2.percona.com,backupstorage -o yaml
+    - script:
+        content: kubectl get backupclass -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-percona-postgresql
+        tail: 100
+    - script:
+        content: |
+          for kind in perconapgclusters.pgv2.percona.com perconapgbackups.pgv2.percona.com perconapgrestores.pgv2.percona.com restore backup instance; do
+            kubectl -n "$NAMESPACE" get "$kind" -o name 2>/dev/null | while read obj; do
+              kubectl -n "$NAMESPACE" patch "$obj" --type=merge -p '{"metadata":{"finalizers":[]}}' || true
+            done
+          done
+          kubectl -n "$NAMESPACE" patch perconapgclusters.pgv2.percona.com --all --type=merge -p '{"metadata":{"finalizers":[]}}' || true
+          kubectl -n "$NAMESPACE" patch perconapgbackups.pgv2.percona.com --all --type=merge -p '{"metadata":{"finalizers":[]}}' || true
+          kubectl -n "$NAMESPACE" patch perconapgrestores.pgv2.percona.com --all --type=merge -p '{"metadata":{"finalizers":[]}}' || true
+          kubectl -n "$NAMESPACE" patch restore --all --type=merge -p '{"metadata":{"finalizers":[]}}' || true
+          kubectl -n "$NAMESPACE" patch backup --all --type=merge -p '{"metadata":{"finalizers":[]}}' || true
+          kubectl -n "$NAMESPACE" patch instance --all --type=merge -p '{"metadata":{"finalizers":[]}}' || true
+  steps:
+    - name: setup-backup-infra
+      try:
+        - script:
+            content: |
+              kubectl -n provider-system scale deployment/provider-percona-postgresql-pg-operator --replicas=0
+              kubectl -n provider-system wait --for=jsonpath='{.spec.replicas}'=0 deployment/provider-percona-postgresql-pg-operator --timeout=60s
+        - apply:
+            file: 00-install.yaml
+        - assert:
+            file: 00-assert.yaml
+
+    - name: create-source-cluster
+      try:
+        - apply:
+            file: 10-create-cluster.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    # Create the users secret, mark the pgBackRest stanza created, then
+    # simulate the source cluster becoming ready. SyncBackup will not create
+    # a PerconaPGBackup until stanzaCreated is true.
+    - name: source-cluster-ready
+      try:
+        - apply:
+            file: 11-cluster-ready.yaml
+        - script:
+            content: |
+              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/src-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+              kubectl patch perconapgclusters.pgv2.percona.com/src-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
+                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"src-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":3,\"ready\":3},\"pgbouncer\":{\"size\":1,\"ready\":1},\"pgbackrest\":{\"repos\":[{\"name\":\"repo1\",\"stanzaCreated\":true}]}}}"
+        - assert:
+            file: 11-assert.yaml
+
+    - name: create-backup
+      try:
+        - apply:
+            file: 20-create-backup.yaml
+        - assert:
+            file: 20-assert.yaml
+
+    # Simulate the PG backup reaching succeeded state, including the backup
+    # set label the restore must pin with --set.
+    - name: backup-ready
+      try:
+        - script:
+            content: |
+              kubectl patch perconapgbackups.pgv2.percona.com/src-backup --subresource status -n "$NAMESPACE" --type=merge \
+                -p '{"status":{"state":"Succeeded","backupName":"20260902-src-backup-set"}}'
+        - assert:
+            file: 21-assert.yaml
+
+    - name: create-cluster-from-backup
+      try:
+        - apply:
+            file: 30-create-cluster-from-backup.yaml
+        - assert:
+            file: 30-assert.yaml
+        # The datasource Restore must be named <instance>-datasource, not <instance>.
+        - error:
+            file: 30-errors.yaml
+
+    # Finish the restore, then simulate the destination cluster ready state.
+    - name: destination-cluster-ready
+      try:
+        - apply:
+            file: 31-dest-cluster-ready.yaml
+        - script:
+            content: |
+              kubectl patch perconapgrestores.pgv2.percona.com/dest-pg-cluster-datasource --subresource status -n "$NAMESPACE" --type=merge \
+                -p '{"status":{"state":"Succeeded"}}'
+              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/dest-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+              kubectl patch perconapgclusters.pgv2.percona.com/dest-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
+                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"dest-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":3,\"ready\":3},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
+        - assert:
+            file: 31-assert.yaml
+
+    - name: delete-clusters
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE delete perconapgrestores.pgv2.percona.com,perconapgbackups.pgv2.percona.com,perconapgclusters.pgv2.percona.com,backup,restore,instance --all --wait=false --ignore-not-found=true
+              for kind in perconapgbackups.pgv2.percona.com perconapgrestores.pgv2.percona.com restore backup perconapgclusters.pgv2.percona.com instance; do
+                kubectl -n "$NAMESPACE" get "$kind" -o name 2>/dev/null | while read obj; do
+                  kubectl -n "$NAMESPACE" patch "$obj" --type=merge -p '{"metadata":{"finalizers":[]}}' || true
+                done
+              done
+        - wait:
+            apiVersion: backup.openeverest.io/v1alpha1
+            kind: Restore
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: pgv2.percona.com/v2
+            kind: PerconaPGRestore
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: pgv2.percona.com/v2
+            kind: PerconaPGBackup
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: pgv2.percona.com/v2
+            kind: PerconaPGCluster
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: backup.openeverest.io/v1alpha1
+            kind: Backup
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: core.openeverest.io/v1alpha1
+            kind: Instance
+            for:
+              deletion: {}
+
+    - name: cleanup-backup-infra
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE delete backupstorage --all --ignore-not-found=true
+              kubectl -n $NAMESPACE delete secret/backup-storage-credentials --ignore-not-found=true
+        - wait:
+            apiVersion: backup.openeverest.io/v1alpha1
+            kind: BackupStorage
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: v1
+            kind: Secret
+            name: backup-storage-credentials
+            for:
+              deletion: {}

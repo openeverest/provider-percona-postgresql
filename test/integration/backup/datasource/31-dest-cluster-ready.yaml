@@ -1,0 +1,12 @@
+---
+# Create the credentials secret so the Instance can reach Ready
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dest-pg-cluster-pguser-dest-pg-cluster
+type: Opaque
+stringData:
+  user: test-user
+  password: test-password
+  pgbouncer-uri: postgresql://test-user:test-password@dest-pg-cluster-pgbouncer.default.svc.cluster.local/postgres?sslmode=require
+  pgbouncer-host: dest-pg-cluster-pgbouncer.default.svc.cluster.local

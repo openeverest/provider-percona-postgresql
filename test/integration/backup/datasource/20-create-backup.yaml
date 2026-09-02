@@ -1,0 +1,11 @@
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: src-backup
+spec:
+  instanceRef:
+    name: src-pg-cluster
+  classRef:
+    name: pg
+  storageRef:
+    name: test-storage-s3
