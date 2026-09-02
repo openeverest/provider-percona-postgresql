@@ -27,7 +27,7 @@ test/
 Each suite is a directory containing one `chainsaw-test.yaml` plus the
 manifest/assert files its steps reference. Add more suites as sibling
 directories (e.g. `backup/`, `monitoring/`) and wire each one to its own
-`test-integration-<suite>` Make target and CI job.
+`test-integration-[suite]` Make target and CI entry.
 
 ## Conventions
 
@@ -56,17 +56,31 @@ controller, your operator's CRDs, and the provider deployed (see the
 go install github.com/kyverno/chainsaw@latest
 ```
 
-Then:
+Then bootstrap the local integration environment (this creates the k3d
+cluster, installs CRDs and MinIO, and checks out/builds/deploys the
+OpenEverest controller into `./_openeverest` if needed):
+
+```bash
+make test-integration-env-up
+```
+
+And run the suites:
 
 ```bash
 make test-integration        # all suites
 make test-integration-core   # just the core suite
 ```
 
+When done:
+
+```bash
+make test-integration-env-down
+```
+
 ## Running in CI
 
-`.github/workflows/ci.yaml` runs each suite as a separate job through the
-reusable `.github/workflows/integration-test.yaml` workflow, which provisions
-a k3d cluster, builds and deploys the provider and the OpenEverest controller,
-and invokes the corresponding Make target. To add a suite to CI, add a job to
-`ci.yaml` that passes the suite's `make_target`.
+`.github/workflows/ci.yaml` runs the integration suites through the reusable
+`.github/workflows/integration-test.yaml` workflow, which provisions a k3d
+cluster, deploys the provider prerequisites, and invokes the chosen Make
+target. The default PR path runs `make test-integration`, so new suites under
+`test/integration/` are picked up automatically.
