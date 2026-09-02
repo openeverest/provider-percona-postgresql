@@ -1,4 +1,4 @@
-# Instance with backup storage configured.
+# Instance with backup storage configured, including PITR on the same storage.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
@@ -33,5 +33,7 @@ spec:
     storages:
       - storageRef:
           name: minio-s3
+        pitr:
+          enabled: true
 
 
