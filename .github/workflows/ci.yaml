@@ -133,20 +133,12 @@ jobs:
       - name: Lint Helm chart
         run: helm lint charts/provider-percona-postgresql
 
-#  test-integration-monitoring-pmm:
-#    name: Integration / monitoring PMM
-#    needs: [lint, build, verify]
-#    uses: ./.github/workflows/integration-test.yaml
-#    with:
-#      make_target: test-integration-monitoring-pmm
-#      suite: monitoring
-#    secrets: inherit
-#
-#  test-integration-backup-datasource:
-#    name: Integration / backup datasource
-#    needs: [lint, build, verify]
-#    uses: ./.github/workflows/integration-test.yaml
-#    with:
-#      make_target: test-integration-backup-datasource
-#      suite: backup
-#    secrets: inherit
+  test-integration:
+    needs: [lint, build, verify, helm-lint]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration
+      suite: integration
+      timeout_minutes: 60
+      needs_minio: true
+    secrets: inherit

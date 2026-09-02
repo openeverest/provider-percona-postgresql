@@ -1,0 +1,80 @@
+---
+name: Reusable integration test
+
+on:
+  workflow_call:
+    inputs:
+      make_target:
+        description: Make target to execute for the integration suite(s)
+        required: true
+        type: string
+      suite:
+        description: Human-readable suite name for the job label
+        required: false
+        default: integration
+        type: string
+      timeout_minutes:
+        description: Job timeout in minutes
+        required: false
+        default: 60
+        type: number
+      needs_minio:
+        description: Whether to deploy MinIO before running the tests
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Integration / ${{ inputs.suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+
+      - name: Install chainsaw
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install github.com/kyverno/chainsaw@latest
+
+      - name: Install k3d
+        run: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+
+      - name: Create test cluster
+        run: make k3d-cluster-up
+
+      - name: Install CRDs
+        run: make install-crds
+
+      - name: Deploy MinIO for backup tests
+        if: ${{ inputs.needs_minio }}
+        run: |
+          kubectl apply -f ./minio.yaml
+          kubectl wait -n minio --for=condition=Ready pod/minio --timeout=180s
+
+      - name: Build provider image
+        run: make docker-build IMG=provider-percona-postgresql:ci-${{ github.sha }}
+
+      - name: Load provider image into k3d
+        run: make load-image IMG=provider-percona-postgresql:ci-${{ github.sha }}
+
+      - name: Deploy provider for CI
+        run: make deploy-provider-ci IMG=provider-percona-postgresql:ci-${{ github.sha }}
+
+      - name: Run integration suite(s)
+        run: make ${{ inputs.make_target }}
+
+      - name: Cleanup test cluster
+        if: always()
+        run: make k3d-cluster-down
+
