@@ -10,5 +10,4 @@ status:
       - name: minio-s3
         pitr:
           state: Available
-          reason: WindowAvailable
 
