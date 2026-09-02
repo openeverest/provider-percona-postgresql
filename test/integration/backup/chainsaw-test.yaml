@@ -1,6 +1,6 @@
 ---
 # Backup & Restore lifecycle suite — tests backup create, completion,
-# restore from backup, restore completion, and clean up.
+# restore from backup, PITR restore, and clean up.
 # Requires a live PG operator (deployed by the Helm chart).
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
@@ -10,8 +10,9 @@ spec:
   description: |
     Lifecycle of a Backup and Restore: create an Instance with backup storage,
     wait for the cluster to become ready, trigger a full backup,
-    wait for completion, restore from that backup, wait for the restore
-    to succeed, verify status, and clean up.
+    wait for completion, verify PITR becomes available on the storage,
+    restore from that backup, then run a point-in-time restore to the latest
+    available target, verify both restores succeed, and clean up.
 
   # Increase timeouts for steps that wait on the real operator.
   timeouts:
@@ -69,6 +70,11 @@ spec:
         - assert:
             file: 31-assert.yaml
 
+    - name: pitr-window-available
+      try:
+        - assert:
+            file: 42-assert.yaml
+
     - name: create-restore
       try:
         - apply:
@@ -95,6 +101,32 @@ spec:
             apiVersion: backup.openeverest.io/v1alpha1
             kind: Restore
             name: test-restore-from-backup
+            for:
+              deletion: {}
+
+    - name: create-pitr-restore
+      try:
+        - apply:
+            file: 50-create-pitr-restore.yaml
+        - assert:
+            file: 50-assert.yaml
+
+    - name: pitr-restore-succeeded
+      try:
+        - assert:
+            file: 51-assert.yaml
+
+    - name: delete-pitr-restore
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE delete restore/test-restore-to-latest --wait=false
+              kubectl -n $NAMESPACE patch perconapgrestore/test-restore-to-latest \
+                -p '{"metadata":{"finalizers":null}}' --type merge 2>/dev/null || true
+        - wait:
+            apiVersion: backup.openeverest.io/v1alpha1
+            kind: Restore
+            name: test-restore-to-latest
             for:
               deletion: {}
 

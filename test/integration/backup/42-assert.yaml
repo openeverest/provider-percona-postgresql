@@ -1,0 +1,14 @@
+# Assert the provider publishes a PITR window for the PITR-enabled storage
+# once the backup has completed and the operator exposes a latest restorable time.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-backup-instance
+status:
+  backup:
+    storages:
+      - name: minio-s3
+        pitr:
+          state: Available
+          reason: WindowAvailable
+
