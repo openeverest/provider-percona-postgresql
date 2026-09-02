@@ -70,6 +70,24 @@ spec:
         - assert:
             file: 31-assert.yaml
 
+    - name: ensure-pitr-window-source
+      try:
+        - script:
+            timeout: 30s
+            content: |
+              # Re-enable PITR on the storage in case storage auto-registration
+              # replaced the entry without the PITR block.
+              kubectl -n $NAMESPACE patch instance/test-backup-instance --type=merge -p '{"spec":{"backup":{"enabled":true,"classRef":{"name":"pg"},"storages":[{"storageRef":{"name":"minio-s3"},"pitr":{"enabled":true}}]}}}'
+
+              # The provider marks PITR as Available only after
+              # latestRestorableTime exists on PerconaPGBackup status.
+              # In this test path we stamp it directly to trigger provider logic.
+              # PerconaPGBackup expects "2006-01-02 15:04:05.000000-0700".
+              now="$(date -u +'%Y-%m-%d %H:%M:%S.000000+0000')"
+              echo "Patching latestRestorableTime: $now"
+              kubectl -n $NAMESPACE patch perconapgbackup/test-full-backup --subresource status --type=merge \
+                -p "{\"status\":{\"latestRestorableTime\":\"$now\"}}"
+
     - name: pitr-window-available
       try:
         - assert:
