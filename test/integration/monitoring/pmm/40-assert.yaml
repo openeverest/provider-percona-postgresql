@@ -1,0 +1,13 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-cluster
+spec:
+  (components.monitoring == null): true
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: test-pg-cluster
+spec:
+  (pmm == null): true

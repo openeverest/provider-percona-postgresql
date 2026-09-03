@@ -1,0 +1,30 @@
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringConfig
+metadata:
+  name: test-pmm
+spec:
+  type: pmm
+  pmm:
+    credentialsSecretRef:
+      name: test-pmm-secret
+    url: http://pmm-updated.example.invalid
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: test-pg-cluster
+spec:
+  pmm:
+    enabled: true
+    serverHost: pmm-updated.example.invalid
+    image: percona/pmm-client:3.7.1
+    secret: test-pg-cluster-pmm-secret
+    customClusterName: test-pg-cluster
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-pg-cluster-pmm-secret
+type: Opaque
+data:
+  PMM_SERVER_TOKEN: YWJjZGVm
