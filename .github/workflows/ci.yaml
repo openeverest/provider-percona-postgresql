@@ -142,3 +142,12 @@ jobs:
       timeout_minutes: 60
       needs_minio: true
     secrets: inherit
+
+  test-e2e-cluster-datasource-backup:
+    name: E2E Cluster / backup datasource
+    needs: [lint, build, verify, helm-lint]
+    uses: ./.github/workflows/e2e-cluster-test.yaml
+    with:
+      make_target: test-e2e-cluster-datasource-backup
+      suite: datasource
+    secrets: inherit
