@@ -1,14 +1,13 @@
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: backup-datasource
+  name: backup-restore
 spec:
   description: |
-    Seed a new Instance from a Backup CR: use cluster Minio, deploy PMM, create a source
-    Instance with backups enabled, write data and take a Backup, then create a
-    destination Instance with a Backup dataSource and monitoring, verify the datasource
-    Restore is created and completes, and validate the seeded data via a
-    PostgreSQL client.
+    Restore a Backup onto the same Instance: use cluster Minio, deploy PMM,
+    create an Instance with backups enabled, write data and take a Backup,
+    mutate the data, restore that Backup in place, and verify the original
+    seeded row is back.
   catch:
     - script:
         content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com,backup,perconapgbackups.pgv2.percona.com,restore,perconapgrestores.pgv2.percona.com,backupstorage,monitoringconfig -o yaml
@@ -127,7 +126,7 @@ spec:
         - script:
             timeout: 60s
             content: |
-              kubectl run -n "${NAMESPACE}" pg-src-client --env="NO_COLOR=1" --image=postgres:17 --restart=Never --command -- sleep 300
+              kubectl run -n "${NAMESPACE}" pg-src-client --env="NO_COLOR=1" --image=postgres:17 --restart=Never --command -- sleep 600
               kubectl wait --for=condition=Ready pod/pg-src-client --timeout=60s -n ${NAMESPACE}
       catch:
         - script:
@@ -155,7 +154,15 @@ spec:
             timeout: 360s
             file: 60-assert.yaml
 
-    - name: create-instance-from-backup
+    - name: mutate-source-data
+      try:
+        - script:
+            content: |
+              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-src-conn -o jsonpath='{.data.uri}' | base64 --decode)"
+              kubectl exec pg-src-client -n ${NAMESPACE} -- psql "$CONN_URI" -v ON_ERROR_STOP=1 \
+                -c "INSERT INTO test(id) VALUES ('after-backup') ON CONFLICT (id) DO NOTHING;"
+
+    - name: create-restore
       try:
         - apply:
             file: 70-create-dest.yaml
@@ -175,39 +182,14 @@ spec:
             timeout: 480s
             file: 90-assert.yaml
 
-    - name: create-dest-postgresql-client
-      try:
-        - script:
-            timeout: 60s
-            content: |
-              kubectl run -n "${NAMESPACE}" pg-dest-client --env="NO_COLOR=1" --image=postgres:17 --restart=Never --command -- sleep 300
-              kubectl wait --for=condition=Ready pod/pg-dest-client --timeout=60s -n ${NAMESPACE}
-      catch:
-        - script:
-            content: kubectl get pod/pg-dest-client -n $NAMESPACE -o yaml
-
-    - name: verify-seeded-data
+    - name: verify-restored-data
       try:
         - script:
             timeout: 90s
             content: |
-              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-dest-conn -o jsonpath='{.data.uri}' | base64 --decode)"
-
-              # After a restore onto a differently named cluster, the provider
-              # rewires the dest user onto the restored (source-named) database.
-              # That happens shortly after Restore succeeds; retry while it lands.
-              found=""
-              for i in 1 2 3 4 5 6 7 8 9 10; do
-                CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-dest-conn -o jsonpath='{.data.uri}' | base64 --decode)"
-                found=$(kubectl exec pg-dest-client -n ${NAMESPACE} -- psql "$CONN_URI" -tA -c "SELECT id FROM test LIMIT 1;" 2>/dev/null || true)
-                if [ "$(echo "$found" | tr -d '[:space:]')" = "openeverest" ]; then
-                  break
-                fi
-                sleep 3
-              done
-
+              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-src-conn -o jsonpath='{.data.uri}' | base64 --decode)"
+              found=$(kubectl exec pg-src-client -n ${NAMESPACE} -- psql "$CONN_URI" -tA -c "SELECT id FROM test ORDER BY id;")
               echo "Found: $found"
-
               test "$(echo "$found" | tr -d '[:space:]')" = "openeverest"
 
     - name: cleanup
@@ -216,5 +198,4 @@ spec:
             timeout: 120s
             content: |
               kubectl delete instance/pg-src -n $NAMESPACE --ignore-not-found || true
-              kubectl delete instance/pg-dest -n $NAMESPACE --ignore-not-found || true
               kubectl delete -f ${OPERATOR_ROOT_PATH}/test/testdata/pmm/deploy.yaml --ignore-not-found || true

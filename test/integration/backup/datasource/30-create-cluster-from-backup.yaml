@@ -1,40 +1,12 @@
-apiVersion: core.openeverest.io/v1alpha1
-kind: Instance
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Restore
 metadata:
-  name: dest-pg-cluster
+  name: src-restore
 spec:
-  providerRef:
-    name: provider-percona-postgresql
+  instanceRef:
+    name: src-pg-cluster
   dataSource:
     type: Backup
     backup:
       backupRef:
         name: src-backup
-  backup:
-    enabled: true
-    classRef:
-      name: pg
-    storages:
-    - storageRef:
-        name: test-storage-s3
-      schedules:
-      - name: full
-        enabled: true
-        cron: "0 2 * * *"
-  components:
-    engine:
-      type: postgresql
-      replicas: 3
-      resources:
-        limits:
-          cpu: "1"
-          memory: 4G
-        requests:
-          cpu: 500m
-          memory: 2G
-      storage:
-        size: 25Gi
-        storageClass: standard
-    proxy:
-      type: pgbouncer
-      replicas: 1

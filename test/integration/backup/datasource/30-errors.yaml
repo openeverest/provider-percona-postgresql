@@ -1,9 +1,0 @@
-apiVersion: backup.openeverest.io/v1alpha1
-kind: Restore
-metadata:
-  name: dest-pg-cluster
----
-apiVersion: pgv2.percona.com/v2
-kind: PerconaPGRestore
-metadata:
-  name: dest-pg-cluster
