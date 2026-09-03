@@ -185,7 +185,11 @@ func TestResolveBackupSource(t *testing.T) {
 		}
 	}
 	newCtx := func(objects ...client.Object) *controller.Context {
-		k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+		copies := make([]client.Object, len(objects))
+		for i, obj := range objects {
+			copies[i] = obj.DeepCopyObject().(client.Object)
+		}
+		k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(copies...).Build()
 		return controller.NewContext(context.Background(), k8sClient, destInstance.DeepCopy(), "provider-percona-postgresql")
 	}
 
