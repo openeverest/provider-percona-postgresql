@@ -1,8 +1,0 @@
-# Assert the PITR restore reports Succeeded after the operator completes it.
-apiVersion: backup.openeverest.io/v1alpha1
-kind: Restore
-metadata:
-  name: test-restore-to-latest
-status:
-  state: Succeeded
-

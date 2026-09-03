@@ -182,7 +182,7 @@ test-integration-backup: ## Run backup integration tests.
 
 .PHONY: test-integration-backup-datasource
 test-integration-backup-datasource: ## Run backup datasource integration tests.
-	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml --include-test-regex "datasource" ./test/integration/backup
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/backup/datasource
 
 .PHONY: test-integration-env-up
 test-integration-env-up: openeverest-checkout ## Bootstrap the local environment for integration tests.
@@ -293,7 +293,7 @@ $(YQ): $(LOCALBIN)
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Install golangci-lint.
 $(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci-lint/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and target name. Usage:
 # $(call go-install-tool,<target>,<package>,<version>)

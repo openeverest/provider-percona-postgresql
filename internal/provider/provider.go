@@ -119,7 +119,27 @@ func New() *Provider {
 
 // FieldIndexes registers indexes required by helper queries used in status computation.
 func (p *Provider) FieldIndexes() []controller.FieldIndex {
-	return nil
+	return []controller.FieldIndex{
+		{
+			Object:    &corev1alpha1.Instance{},
+			FieldPath: monitoringConfigRefFieldPath,
+			Extractor: func(obj client.Object) []string {
+				instance, ok := obj.(*corev1alpha1.Instance)
+				if !ok {
+					return nil
+				}
+				component, ok := instance.Spec.Components[common.ComponentMonitoring]
+				if !ok {
+					return nil
+				}
+				name, err := monitoringConfigNameFromComponent(component)
+				if err != nil || name == "" {
+					return nil
+				}
+				return []string{name}
+			},
+		},
+	}
 }
 
 // Validate checks if the Instance spec is valid.
@@ -398,10 +418,17 @@ func (p *Provider) Sync(c *controller.Context) error {
 	}
 	if restoring {
 		l.Info("Restore is in progress, skipping cluster apply", "cluster", c.Name())
+		if _, err := c.ReconcileDataSource(); err != nil {
+			return err
+		}
 		return backupConfigErr
 	}
 
 	if err := c.Apply(cluster); err != nil {
+		return err
+	}
+
+	if _, err := c.ReconcileDataSource(); err != nil {
 		return err
 	}
 

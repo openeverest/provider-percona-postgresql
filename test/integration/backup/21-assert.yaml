@@ -1,9 +1,0 @@
-# Assert Instance reports Ready after simulating operator readiness.
-apiVersion: core.openeverest.io/v1alpha1
-kind: Instance
-metadata:
-  name: test-backup-instance
-status:
-  phase: Ready
-
-

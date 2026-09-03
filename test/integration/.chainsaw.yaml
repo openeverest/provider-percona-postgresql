@@ -1,6 +1,4 @@
 ---
-# Chainsaw configuration shared by all integration test suites.
-# See https://kyverno.github.io/chainsaw/latest/configuration/ for options.
 apiVersion: chainsaw.kyverno.io/v1alpha2
 kind: Configuration
 metadata:
