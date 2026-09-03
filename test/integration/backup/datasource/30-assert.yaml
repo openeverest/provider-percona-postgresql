@@ -81,6 +81,8 @@ metadata:
 spec:
   pgCluster: dest-pg-cluster
   repoName: repo1
-  options:
-    - --set=20260902-src-backup-set
-    - --type=immediate
+  # Chainsaw matches arrays by length; cross-instance restores also pass
+  # --repo1-path=/pgbackrest/<sourceUID>/repo1 so the dest cluster can read
+  # the source backup. Assert the flags that are independent of that UID.
+  (options[?@ == '--set=20260902-src-backup-set'] | [0]): "--set=20260902-src-backup-set"
+  (options[?@ == '--type=immediate'] | [0]): "--type=immediate"

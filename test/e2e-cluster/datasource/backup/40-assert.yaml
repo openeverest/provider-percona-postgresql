@@ -1,0 +1,21 @@
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: pg-src
+status:
+  postgres:
+    ready: 1
+  # Chainsaw matches arrays by length; PG operator reports many conditions.
+  (conditions[?type == 'ReadyForBackup'] | [0].status): "True"
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-src
+status:
+  phase: Ready
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-src-conn

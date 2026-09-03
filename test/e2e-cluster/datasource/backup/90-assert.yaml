@@ -1,0 +1,33 @@
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGRestore
+metadata:
+  name: pg-dest-datasource
+status:
+  state: Succeeded
+---
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Restore
+metadata:
+  name: pg-dest-datasource
+status:
+  state: Succeeded
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-dest
+status:
+  phase: Ready
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: pg-dest
+status:
+  postgres:
+    ready: 1
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-dest-conn
