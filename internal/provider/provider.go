@@ -356,10 +356,12 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
-	// We do NOT set spec.users — the Percona PG operator automatically
-	// creates a default user and database named after the cluster. The
-	// default user is not a superuser, which is required for PGBouncer
-	// authentication (pgbouncer.get_auth() excludes superusers).
+	// We do NOT set spec.users for a normal cluster — the Percona PG operator
+	// automatically creates a default user and database named after the
+	// cluster. The default user is not a superuser, which is required for
+	// PGBouncer authentication (pgbouncer.get_auth() excludes superusers).
+	// After a restore from another Instance, applyPostRestoreUsers rewires
+	// spec.users so the dest user can reach the restored database.
 
 	// Automatically remove storages that have no schedules and no Backup CRs
 	// referencing them. This frees repo slots for reuse.
@@ -422,6 +424,10 @@ func (p *Provider) Sync(c *controller.Context) error {
 			return err
 		}
 		return backupConfigErr
+	}
+
+	if err := applyPostRestoreUsers(c, cluster); err != nil {
+		return err
 	}
 
 	if err := c.Apply(cluster); err != nil {
