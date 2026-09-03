@@ -1,7 +1,0 @@
-# Assert the provider created the PerconaPGBackup for the instance.
-apiVersion: pgv2.percona.com/v2
-kind: PerconaPGBackup
-metadata:
-  name: test-full-backup
-spec:
-  pgCluster: test-backup-instance
