@@ -1,0 +1,22 @@
+# Datasource restores can complete in seconds, so do not assert
+# Instance status.phase=Restoring here. The Restore CRs prove seeding
+# started; 90-assert.yaml checks they succeeded and the instance is Ready.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Restore
+metadata:
+  name: pg-dest-datasource
+spec:
+  instanceRef:
+    name: pg-dest
+  dataSource:
+    type: Backup
+    backup:
+      backupRef:
+        name: pg-src-backup
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGRestore
+metadata:
+  name: pg-dest-datasource
+spec:
+  pgCluster: pg-dest

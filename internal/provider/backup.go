@@ -7,6 +7,7 @@ import (
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -163,7 +164,7 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 
 		backupType := resolveBackupType(backup)
 
-		opBackup = &pgv2.PerconaPGBackup{
+		opBackup := &pgv2.PerconaPGBackup{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      backup.Name,
 				Namespace: backup.Namespace,
@@ -285,6 +286,15 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 			return controller.RestoreExecutionStatus{}, fmt.Errorf("get PerconaPGRestore %q: %w", restore.Name, err)
 		}
 
+		// In-place restore on a brand-new cluster races Patroni init: Crunchy
+		// marks ReadyForRestore while there are no pods, the empty cluster
+		// then bootstraps (ClusterAlreadyBootstrapped), and the restore Job
+		// never finishes. Wait until the target is Ready so prepareForRestore
+		// can tear the cluster down and run a real in-place restore.
+		if pending := pendingUntilTargetReadyForRestore(c, restore, opRef); pending != nil {
+			return *pending, nil
+		}
+
 		opRestore = &pgv2.PerconaPGRestore{
 			ObjectMeta: metav1.ObjectMeta{Name: restore.Name, Namespace: restore.Namespace},
 			Spec: pgv2.PerconaPGRestoreSpec{
@@ -293,7 +303,6 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 				Options:   restoreOptions,
 			},
 		}
-
 		if err := controllerutil.SetControllerReference(restore, opRestore, c.Client().Scheme()); err != nil {
 			return controller.RestoreExecutionStatus{}, fmt.Errorf("set restore controller reference: %w", err)
 		}
@@ -459,7 +468,77 @@ func resolveBackupSource(
 	// ends up at the latest state rather than the backup's point-in-time.
 	options = append(options, "--type=immediate")
 
+	// PerconaPGRestore always runs against the *target* cluster, whose
+	// repoN-path is /pgbackrest/<targetUID>/repoN. A backup taken on another
+	// Instance lives under that Instance's UID, so override repoN-path or
+	// pgBackRest looks in an empty prefix (FileMissingError on backup.info).
+	if sourceBackup.Spec.InstanceRef.Name != restore.Spec.InstanceRef.Name {
+		if repoName == nil || *repoName == "" {
+			return nil, nil, &controller.RestoreExecutionStatus{
+				State:              backupv1alpha1.RestoreStateFailed,
+				Message:            "Source backup has no repo name; cannot restore onto another instance",
+				OperatorRestoreRef: opRef,
+			}, nil
+		}
+		path, pending, err := sourceBackupRepoPath(c, restore, sourceBackup, *repoName, opRef)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if pending != nil {
+			return nil, nil, pending, nil
+		}
+		options = append(options, fmt.Sprintf("--%s-path=%s", *repoName, path))
+	}
+
 	return repoName, options, nil, nil
+}
+
+// sourceBackupRepoPath is the object-storage prefix where the source backup
+// was written. Prefer the path already configured on the source cluster; fall
+// back to the same /pgbackrest/<instanceUID>/<repo> formula used when the
+// cluster was created.
+func sourceBackupRepoPath(
+	c *controller.Context,
+	restore *backupv1alpha1.Restore,
+	sourceBackup *backupv1alpha1.Backup,
+	repoName string,
+	opRef *apicommon.TypedObjectRef,
+) (string, *controller.RestoreExecutionStatus, error) {
+	sourceName := sourceBackup.Spec.InstanceRef.Name
+	sourceCluster := &pgv2.PerconaPGCluster{}
+	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: sourceName}, sourceCluster); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", &controller.RestoreExecutionStatus{
+				State:              backupv1alpha1.RestoreStatePending,
+				Message:            fmt.Sprintf("Waiting for source PerconaPGCluster %q", sourceName),
+				OperatorRestoreRef: opRef,
+			}, nil
+		}
+		return "", nil, fmt.Errorf("get source PerconaPGCluster %q: %w", sourceName, err)
+	}
+	if path := sourceCluster.Spec.Backups.PGBackRest.Global[repoName+"-path"]; path != "" {
+		return path, nil, nil
+	}
+
+	sourceInstance := &corev1alpha1.Instance{}
+	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: sourceName}, sourceInstance); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", &controller.RestoreExecutionStatus{
+				State:              backupv1alpha1.RestoreStatePending,
+				Message:            fmt.Sprintf("Waiting for source Instance %q", sourceName),
+				OperatorRestoreRef: opRef,
+			}, nil
+		}
+		return "", nil, fmt.Errorf("get source Instance %q: %w", sourceName, err)
+	}
+	if sourceInstance.UID == "" {
+		return "", &controller.RestoreExecutionStatus{
+			State:              backupv1alpha1.RestoreStatePending,
+			Message:            fmt.Sprintf("Waiting for source Instance %q UID", sourceName),
+			OperatorRestoreRef: opRef,
+		}, nil
+	}
+	return pgBackRestRepoPath(string(sourceInstance.UID), repoName), nil, nil
 }
 
 // resolvePointInTimeSource rolls the WAL stream forward to a recovery target.
@@ -536,6 +615,49 @@ func resolvePointInTimeSource(
 	}
 
 	return &repoName, options, nil, nil
+}
+
+// pendingUntilTargetReadyForRestore returns a Pending status when the target
+// cluster is missing or not yet Ready. A nil result means SyncRestore may
+// create PerconaPGRestore.
+func pendingUntilTargetReadyForRestore(
+	c *controller.Context,
+	restore *backupv1alpha1.Restore,
+	opRef *apicommon.TypedObjectRef,
+) *controller.RestoreExecutionStatus {
+	cluster := &pgv2.PerconaPGCluster{}
+	if err := c.Client().Get(c.Context(), client.ObjectKey{
+		Namespace: restore.Namespace,
+		Name:      restore.Spec.InstanceRef.Name,
+	}, cluster); err != nil {
+		if apierrors.IsNotFound(err) {
+			return &controller.RestoreExecutionStatus{
+				State:              backupv1alpha1.RestoreStatePending,
+				Message:            fmt.Sprintf("Waiting for PerconaPGCluster %q", restore.Spec.InstanceRef.Name),
+				OperatorRestoreRef: opRef,
+			}
+		}
+		return &controller.RestoreExecutionStatus{
+			State:              backupv1alpha1.RestoreStatePending,
+			Message:            fmt.Sprintf("Waiting for PerconaPGCluster %q: %v", restore.Spec.InstanceRef.Name, err),
+			OperatorRestoreRef: opRef,
+		}
+	}
+	if !targetReadyForInPlaceRestore(cluster) {
+		return &controller.RestoreExecutionStatus{
+			State: backupv1alpha1.RestoreStatePending,
+			Message: fmt.Sprintf(
+				"Waiting for PerconaPGCluster %q to be ready before starting restore",
+				restore.Spec.InstanceRef.Name,
+			),
+			OperatorRestoreRef: opRef,
+		}
+	}
+	return nil
+}
+
+func targetReadyForInPlaceRestore(cluster *pgv2.PerconaPGCluster) bool {
+	return cluster.Status.State == pgv2.AppStateReady
 }
 
 // CleanupBackup deletes the operator backup resource.

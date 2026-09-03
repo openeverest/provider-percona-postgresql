@@ -1,0 +1,11 @@
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: pg-src-backup
+spec:
+  instanceRef:
+    name: pg-src
+  classRef:
+    name: percona-backup-postgresql
+  storageRef:
+    name: minio-storage
