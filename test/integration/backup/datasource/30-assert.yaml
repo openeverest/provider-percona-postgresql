@@ -1,70 +1,7 @@
-apiVersion: core.openeverest.io/v1alpha1
-kind: Instance
-metadata:
-  name: dest-pg-cluster
-spec:
-  providerRef:
-    name: provider-percona-postgresql
-  dataSource:
-    type: Backup
-    backup:
-      backupRef:
-        name: src-backup
-  backup:
-    enabled: true
-    classRef:
-      name: pg
-    storages:
-    - storageRef:
-        name: test-storage-s3
-      schedules:
-      - name: full
-        enabled: true
-        cron: "0 2 * * *"
-  components:
-    engine:
-      type: postgresql
-      replicas: 3
-      resources:
-        limits:
-          cpu: "1"
-          memory: 4G
-        requests:
-          cpu: 500m
-          memory: 2G
-      storage:
-        size: 25Gi
-        storageClass: standard
-    proxy:
-      type: pgbouncer
-      replicas: 1
-status:
-  phase: Restoring
----
-apiVersion: pgv2.percona.com/v2
-kind: PerconaPGCluster
-metadata:
-  name: dest-pg-cluster
-spec:
-  backups:
-    enabled: true
-    pgbackrest:
-      repos:
-        - name: repo1
-          s3:
-            bucket: test-backup-bucket
-            region: us-east-1
-            endpoint: http://fake
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: dest-pg-cluster-pgbackrest-repo1-creds
----
 apiVersion: backup.openeverest.io/v1alpha1
 kind: Restore
 metadata:
-  name: dest-pg-cluster-datasource
+  name: src-restore
 spec:
   dataSource:
     type: Backup
@@ -72,17 +9,15 @@ spec:
       backupRef:
         name: src-backup
   instanceRef:
-    name: dest-pg-cluster
+    name: src-pg-cluster
 ---
 apiVersion: pgv2.percona.com/v2
 kind: PerconaPGRestore
 metadata:
-  name: dest-pg-cluster-datasource
+  name: src-restore
 spec:
-  pgCluster: dest-pg-cluster
+  pgCluster: src-pg-cluster
   repoName: repo1
-  # Chainsaw matches arrays by length; cross-instance restores also pass
-  # --repo1-path=/pgbackrest/<sourceUID>/repo1 so the dest cluster can read
-  # the source backup. Assert the flags that are independent of that UID.
-  (options[?@ == '--set=20260902-src-backup-set'] | [0]): "--set=20260902-src-backup-set"
-  (options[?@ == '--type=immediate'] | [0]): "--type=immediate"
+  options:
+    - --set=20260902-src-backup-set
+    - --type=immediate

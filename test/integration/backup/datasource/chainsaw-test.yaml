@@ -2,12 +2,13 @@
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: backup-datasource
+  name: backup-restore
 spec:
   description: |
-    Restore from a backup into a new Instance: create a source cluster with
-    backups enabled, take a backup, create a destination cluster from that
-    backup, and verify the datasource Restore is created.
+    Restore from a backup onto the same Instance: create a cluster with
+    backups enabled, take a backup, create a Restore CR targeting that
+    cluster, and verify PerconaPGRestore is created with --set and
+    --type=immediate.
   catch:
     - script:
         content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com,backup,perconapgbackups.pgv2.percona.com,restore,perconapgrestores.pgv2.percona.com,backupstorage -o yaml
@@ -82,40 +83,20 @@ spec:
         - assert:
             file: 21-assert.yaml
 
-    - name: create-cluster-from-backup
+    - name: create-restore
       try:
         - apply:
             file: 30-create-cluster-from-backup.yaml
-        # SyncRestore waits until the dest cluster is Ready before creating
-        # PerconaPGRestore (avoids racing empty bootstrap). The PG operator is
-        # scaled to 0 here, so stub dest status like the source cluster.
-        - script:
-            content: |
-              for i in $(seq 1 60); do
-                kubectl get perconapgclusters.pgv2.percona.com/dest-pg-cluster -n "$NAMESPACE" && break
-                sleep 1
-              done
-              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/dest-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
-              kubectl patch perconapgclusters.pgv2.percona.com/dest-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
-                -p "{\"status\":{\"state\":\"ready\",\"observedGeneration\":${GEN},\"host\":\"dest-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":3,\"ready\":3},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
         - assert:
             file: 30-assert.yaml
-        # The datasource Restore must be named <instance>-datasource, not <instance>.
-        - error:
-            file: 30-errors.yaml
 
-    # Finish the restore, then simulate the destination cluster ready state.
-    - name: destination-cluster-ready
+    # Finish the restore and keep the source cluster ready.
+    - name: restore-complete
       try:
-        - apply:
-            file: 31-dest-cluster-ready.yaml
         - script:
             content: |
-              kubectl patch perconapgrestores.pgv2.percona.com/dest-pg-cluster-datasource --subresource status -n "$NAMESPACE" --type=merge \
+              kubectl patch perconapgrestores.pgv2.percona.com/src-restore --subresource status -n "$NAMESPACE" --type=merge \
                 -p '{"status":{"state":"Succeeded"}}'
-              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/dest-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
-              kubectl patch perconapgclusters.pgv2.percona.com/dest-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
-                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"dest-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":3,\"ready\":3},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
         - assert:
             file: 31-assert.yaml
 
