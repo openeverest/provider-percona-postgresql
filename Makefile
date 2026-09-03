@@ -216,6 +216,14 @@ openeverest-checkout: ## Ensure a local OpenEverest checkout exists for integrat
 test-e2e: ## Run Playwright E2E tests against a running Everest UI (http://localhost:8080).
 	cd test/e2e && npm ci && npx playwright test
 
+.PHONY: test-e2e-cluster
+test-e2e-cluster: ## Run E2E cluster tests (requires PG operator).
+	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster
+
+.PHONY: test-e2e-cluster-datasource-backup
+test-e2e-cluster-datasource-backup: ## Run backup datasource e2e-cluster test (requires a running PG operator).
+	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/datasource/backup
+
 .PHONY: load-image
 load-image: ## Import the provider image (IMG) into the k3d cluster.
 	k3d image import ${IMG} -c ${K3D_CLUSTER_NAME}
@@ -248,6 +256,20 @@ deploy-provider-ci: ## Deploy the provider via Helm for CI (IMG must already be 
 		--set image.pullPolicy=Never \
 		--set pg-operator.replicaCount=$(PG_OPERATOR_REPLICA_COUNT) \
 		--wait --timeout 2m
+
+.PHONY: deploy-provider-e2e
+deploy-provider-e2e: ## Deploy the provider with PG operator for E2E tests.
+	helm repo add percona https://percona.github.io/percona-helm-charts/
+	helm dependency build $(CHART_DIR)
+	helm upgrade --install provider-percona-postgresql $(CHART_DIR) \
+		--create-namespace \
+		--namespace provider-system \
+		--set image.repository=$(_IMG_REPO) \
+		--set image.tag=$(_IMG_TAG) \
+		--set image.pullPolicy=Never \
+		--set pg-operator.replicaCount=1 \
+		--wait --timeout 5m
+	kubectl wait --for condition=available --timeout=120s deploy/provider-percona-postgresql-pg-operator -n provider-system
 
 ##@ Local Development Cluster
 

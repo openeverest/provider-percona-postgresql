@@ -208,6 +208,7 @@ make generate           # RBAC, provider spec, Helm chart sync
 make run                # run the provider locally against the cluster
 make test-unit
 make test-integration   # chainsaw suites
+make test-e2e-cluster   # chainsaw suites that need a running PG operator (test/e2e-cluster)
 make dev-down
 ```
 
@@ -230,15 +231,16 @@ code generation, and the backup/restore interfaces are documented once for all p
 | `config/rbac/role.yaml` | Generated `ClusterRole` — do not edit |
 | `examples/` | Example `Instance` resources |
 | `dev/` | Tilt dev environment, `.env` configuration, k3d cluster config |
-| `.github/workflows/` | CI: lint, build, unit and integration tests, release |
+| `.github/workflows/` | CI: lint, build, unit, integration and e2e-cluster tests, release |
 
 ### Testing
 
 - **Unit tests** — `make test-unit`.
 - **Integration tests** — `make test-integration` runs the chainsaw suites.
+- **E2E cluster tests** — `make test-e2e-cluster` runs chainsaw suites that need a running PG operator (`test/e2e-cluster`).
 - **CI** — [.github/workflows/ci.yaml](.github/workflows/ci.yaml) runs lint, build, unit
-  tests, generated-file verification, Helm lint, and each integration suite on every pull
-  request.
+  tests, generated-file verification, Helm lint, integration suites, and the e2e-cluster
+  backup datasource suite on every pull request.
 
 ## Troubleshooting
 
