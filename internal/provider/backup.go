@@ -163,7 +163,7 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 
 		backupType := resolveBackupType(backup)
 
-		opBackup = &pgv2.PerconaPGBackup{
+		opBackup := &pgv2.PerconaPGBackup{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      backup.Name,
 				Namespace: backup.Namespace,
@@ -293,7 +293,6 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 				Options:   restoreOptions,
 			},
 		}
-
 		if err := controllerutil.SetControllerReference(restore, opRestore, c.Client().Scheme()); err != nil {
 			return controller.RestoreExecutionStatus{}, fmt.Errorf("set restore controller reference: %w", err)
 		}
@@ -458,6 +457,17 @@ func resolveBackupSource(
 	// Without this, pgBackRest replays all available WAL and the database
 	// ends up at the latest state rather than the backup's point-in-time.
 	options = append(options, "--type=immediate")
+
+	if sourceBackup.Spec.Origin.InstanceRef.Name != restore.Spec.InstanceRef.Name {
+		return nil, nil, &controller.RestoreExecutionStatus{
+			State: backupv1alpha1.RestoreStateFailed,
+			Message: fmt.Sprintf(
+				"Restore from Backup %q onto Instance %q is not supported; the Backup belongs to Instance %q",
+				sourceBackup.Name, restore.Spec.InstanceRef.Name, sourceBackup.Spec.Origin.InstanceRef.Name,
+			),
+			OperatorRestoreRef: opRef,
+		}, nil
+	}
 
 	return repoName, options, nil, nil
 }

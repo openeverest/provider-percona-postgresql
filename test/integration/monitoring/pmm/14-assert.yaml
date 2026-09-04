@@ -1,0 +1,37 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-cluster
+spec:
+  components:
+    monitoring:
+      resources:
+        requests:
+          memory: 64Mi
+          cpu: 250m
+        limits:
+          memory: 128Mi
+          cpu: 500m
+      parameters:
+        monitoringConfigName: test-pmm
+status:
+  phase: Ready
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: test-pg-cluster
+spec:
+  pmm:
+    enabled: true
+    serverHost: pmm.example.invalid
+    image: percona/pmm-client:3.7.1
+    secret: test-pg-cluster-pmm-secret
+    customClusterName: test-pg-cluster
+    resources:
+      requests:
+        memory: 64Mi
+        cpu: 250m
+      limits:
+        memory: 128Mi
+        cpu: 500m

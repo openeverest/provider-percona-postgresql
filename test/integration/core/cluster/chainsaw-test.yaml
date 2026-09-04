@@ -1,0 +1,164 @@
+---
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: core-cluster
+spec:
+  description: |
+    PostgreSQL Instance lifecycle: create a 3-node cluster, report Ready from
+    simulated operator status, scale, apply affinity and Service type updates,
+    switch to a single-node topology, and delete cleanly.
+    The Percona operator is scaled to 0 so status is simulated, matching other
+    integration suites.
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-percona-postgresql
+        tail: 100
+  steps:
+    - name: scale-down-pg-operator
+      try:
+        - script:
+            content: |
+              kubectl -n provider-system scale deployment/provider-percona-postgresql-pg-operator --replicas=0
+              kubectl -n provider-system wait --for=jsonpath='{.spec.replicas}'=0 deployment/provider-percona-postgresql-pg-operator --timeout=60s
+        - assert:
+            file: 00-assert.yaml
+
+    - name: create-cluster
+      try:
+        - apply:
+            file: 10-create-cluster.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    # Create the users secret, then simulate the cluster becoming ready. The
+    # secret must exist before the status patch triggers reconcile, otherwise
+    # connection details are omitted (the provider does not watch Secrets).
+    - name: cluster-ready
+      try:
+        - apply:
+            file: 11-cluster-ready.yaml
+        - script:
+            content: |
+              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+              kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
+                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":3,\"ready\":3},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
+        - assert:
+            file: 11-assert.yaml
+
+    - name: scale-cluster
+      try:
+        - apply:
+            file: 20-update-cluster.yaml
+        - script:
+            content: |
+              kubectl wait perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" \
+                --for=jsonpath='{.spec.instances[0].replicas}'=5 --timeout=30s
+              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+              kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
+                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
+        - assert:
+            file: 20-assert.yaml
+
+    - name: update-affinity
+      try:
+        - apply:
+            file: 21-update-cluster-affinity.yaml
+        - script:
+            content: |
+              kubectl wait instance/test-pg-cluster -n "$NAMESPACE" \
+                --for=jsonpath='{.spec.components.engine.schedulingPolicy.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight}'=100 --timeout=30s
+              sleep 3
+              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+              kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
+                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
+        - assert:
+            file: 21-assert.yaml
+
+    - name: update-service-load-balancer
+      try:
+        - apply:
+            file: 22-update-cluster-lb.yaml
+        - script:
+            content: |
+              kubectl wait instance/test-pg-cluster -n "$NAMESPACE" \
+                --for=jsonpath='{.spec.components.engine.service.serviceType}'=LoadBalancer --timeout=30s
+              sleep 3
+              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+              kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
+                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
+        - assert:
+            file: 22-assert.yaml
+
+    - name: update-service-cluster-ip
+      try:
+        - apply:
+            file: 23-update-cluster-cluster-ip.yaml
+        - script:
+            content: |
+              kubectl wait instance/test-pg-cluster -n "$NAMESPACE" \
+                --for=jsonpath='{.spec.components.engine.service.serviceType}'=ClusterIP --timeout=30s
+              sleep 3
+              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+              kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
+                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
+        - assert:
+            file: 23-assert.yaml
+
+    - name: update-service-node-port
+      try:
+        - apply:
+            file: 24-update-cluster-node-port.yaml
+        - script:
+            content: |
+              kubectl wait instance/test-pg-cluster -n "$NAMESPACE" \
+                --for=jsonpath='{.spec.components.engine.service.serviceType}'=NodePort --timeout=30s
+              sleep 3
+              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+              kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
+                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
+        - assert:
+            file: 24-assert.yaml
+
+    - name: create-single-node-cluster
+      try:
+        - apply:
+            file: 40-create-single-node-cluster.yaml
+        - assert:
+            file: 40-assert.yaml
+
+    - name: single-node-ready
+      try:
+        - apply:
+            file: 41-cluster-ready.yaml
+        - script:
+            content: |
+              kubectl wait perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" \
+                --for=jsonpath='{.spec.instances[0].replicas}'=1 --timeout=30s
+              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+              kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
+                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":1,\"ready\":1},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
+        - assert:
+            file: 41-assert.yaml
+
+    - name: delete-cluster
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE delete instance/test-pg-cluster perconapgclusters.pgv2.percona.com/test-pg-cluster --wait=false --ignore-not-found && sleep 5
+              kubectl -n $NAMESPACE patch perconapgclusters.pgv2.percona.com/test-pg-cluster -p '{"metadata":{"finalizers":null}}' --type merge || true
+        - wait:
+            apiVersion: core.openeverest.io/v1alpha1
+            kind: Instance
+            name: test-pg-cluster
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: pgv2.percona.com/v2
+            kind: PerconaPGCluster
+            name: test-pg-cluster
+            for:
+              deletion: {}

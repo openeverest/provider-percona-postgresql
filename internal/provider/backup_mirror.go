@@ -563,13 +563,20 @@ func buildPGBackRestRepo(
 		// Use instance UID as a path prefix so different instances don't
 		// collide when sharing the same bucket.
 		if instanceUID != "" {
-			repoGlobal[repoName+"-path"] = fmt.Sprintf("/pgbackrest/%s/%s", instanceUID, repoName)
+			repoGlobal[repoName+"-path"] = pgBackRestRepoPath(instanceUID, repoName)
 		}
 	default:
 		return repo, nil, &controller.BackupConfigError{Reason: "StorageTypeUnsupported", Message: fmt.Sprintf("BackupStorage %q type %q is not supported; only s3 is supported", bs.Name, bs.Spec.Type)}
 	}
 
 	return repo, repoGlobal, nil
+}
+
+// pgBackRestRepoPath is the object-storage prefix used for a cluster's repo.
+// Instance UID keeps backups from different instances from colliding in a
+// shared bucket.
+func pgBackRestRepoPath(instanceUID, repoName string) string {
+	return fmt.Sprintf("/pgbackrest/%s/%s", instanceUID, repoName)
 }
 
 func buildPGBackRestSchedules(schedules []corev1alpha1.InstanceBackupSchedule) *upstreamv1beta1.PGBackRestBackupSchedules {

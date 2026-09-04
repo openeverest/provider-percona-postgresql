@@ -1,0 +1,19 @@
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Restore
+metadata:
+  name: pg-src-restore
+spec:
+  instanceRef:
+    name: pg-src
+  dataSource:
+    type: Backup
+    backup:
+      backupRef:
+        name: pg-src-backup
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGRestore
+metadata:
+  name: pg-src-restore
+spec:
+  pgCluster: pg-src

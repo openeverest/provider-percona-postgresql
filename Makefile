@@ -13,7 +13,7 @@ RELEASE_FULLCOMMIT ?= $(shell git rev-parse HEAD)
 CONTAINER_TOOL ?= docker
 
 # OpenEverest branch to use for OpenEverest CRD installation.
-OPENEVEREST_BRANCH ?= release-2.0
+OPENEVEREST_BRANCH ?= main
 
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/openeverest/provider-percona-postgresql-dev:latest
@@ -45,6 +45,13 @@ K3D_CLUSTER_NAME ?= provider-percona-postgresql-test
 
 # PG operator version used for CRD installation in CI
 PG_OPERATOR_VERSION ?= 3.0.0
+
+# PG operator replicas to deploy alongside the provider in integration envs.
+PG_OPERATOR_REPLICA_COUNT ?= 1
+
+# Local checkout path used when bootstrapping the OpenEverest controller for
+# integration tests.
+OPENEVEREST_DIR ?= _openeverest
 
 .PHONY: help
 help: ## Display this help.
@@ -156,27 +163,63 @@ test-unit: ## Run Go unit tests.
 
 .PHONY: test-integration
 test-integration: ## Run all integration tests against K8S cluster.
-	. ./test/vars.sh && kubectl kuttl test --config ./test/integration/kuttl.yaml
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration
 
 .PHONY: test-integration-core
 test-integration-core: ## Run core integration tests.
-	. ./test/vars.sh && kubectl kuttl test --config ./test/integration/kuttl-core.yaml
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/core
 
 .PHONY: test-integration-monitoring-pmm
 test-integration-monitoring-pmm: ## Run PMM integration tests.
-	. ./test/vars.sh && kubectl kuttl test --config ./test/integration/kuttl-monitoring.yaml
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/monitoring
 
 .PHONY: test-integration-backup
 test-integration-backup: ## Run backup integration tests.
-	. ./test/vars.sh && kubectl kuttl test --config ./test/integration/kuttl-backup.yaml
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/backup
 
 .PHONY: test-integration-backup-datasource
 test-integration-backup-datasource: ## Run backup datasource integration tests.
-	. ./test/vars.sh && kubectl kuttl test --config ./test/integration/kuttl-backup.yaml --test "datasource"
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/backup/datasource
+
+.PHONY: test-integration-env-up
+test-integration-env-up: openeverest-checkout ## Bootstrap the local environment for integration tests.
+	$(MAKE) k3d-cluster-up
+	$(MAKE) install-crds
+	kubectl apply -f ./minio.yaml
+	kubectl wait -n minio --for=condition=Ready pod/minio --timeout=180s
+	$(MAKE) docker-build
+	$(MAKE) load-image
+	$(MAKE) -C $(OPENEVEREST_DIR) build-controller
+	$(MAKE) -C $(OPENEVEREST_DIR) docker-build-controller
+	$(MAKE) load-openeverest-controller-image
+	$(MAKE) deploy-provider-ci
+	$(MAKE) -C $(OPENEVEREST_DIR) deploy-test-controller
+	$(MAKE) -C $(OPENEVEREST_DIR) wait-test-controller
+
+.PHONY: test-integration-env-down
+test-integration-env-down: ## Tear down the local integration test environment.
+	$(MAKE) k3d-cluster-down
+
+.PHONY: openeverest-checkout
+openeverest-checkout: ## Ensure a local OpenEverest checkout exists for integration env bootstrap.
+	@if [ ! -d "$(OPENEVEREST_DIR)/.git" ]; then \
+		git clone --depth 1 --branch $(OPENEVEREST_BRANCH) https://github.com/openeverest/openeverest "$(OPENEVEREST_DIR)"; \
+	else \
+		git -C "$(OPENEVEREST_DIR)" fetch --depth 1 origin $(OPENEVEREST_BRANCH); \
+		git -C "$(OPENEVEREST_DIR)" checkout --force FETCH_HEAD; \
+	fi
 
 .PHONY: test-e2e
 test-e2e: ## Run Playwright E2E tests against a running Everest UI (http://localhost:8080).
 	cd test/e2e && npm ci && npx playwright test
+
+.PHONY: test-e2e-cluster
+test-e2e-cluster: ## Run E2E cluster tests (requires PG operator).
+	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster
+
+.PHONY: test-e2e-cluster-datasource-backup
+test-e2e-cluster-datasource-backup: ## Run backup datasource e2e-cluster test (requires a running PG operator).
+	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/datasource/backup
 
 .PHONY: load-image
 load-image: ## Import the provider image (IMG) into the k3d cluster.
@@ -205,11 +248,27 @@ deploy-provider-ci: ## Deploy the provider via Helm for CI (IMG must already be 
 	helm upgrade --install provider-percona-postgresql $(CHART_DIR) \
 		--create-namespace \
 		--namespace provider-system \
+		--skip-crds \
 		--set image.repository=$(_IMG_REPO) \
 		--set image.tag=$(_IMG_TAG) \
 		--set image.pullPolicy=Never \
-		--set operator.replicaCount=0 \
+		--set pg-operator.replicaCount=$(PG_OPERATOR_REPLICA_COUNT) \
 		--wait --timeout 2m
+
+.PHONY: deploy-provider-e2e
+deploy-provider-e2e: ## Deploy the provider with PG operator for E2E tests.
+	helm repo add percona https://percona.github.io/percona-helm-charts/
+	helm dependency build $(CHART_DIR)
+	helm upgrade --install provider-percona-postgresql $(CHART_DIR) \
+		--create-namespace \
+		--namespace provider-system \
+		--skip-crds \
+		--set image.repository=$(_IMG_REPO) \
+		--set image.tag=$(_IMG_TAG) \
+		--set image.pullPolicy=Never \
+		--set pg-operator.replicaCount=1 \
+		--wait --timeout 5m
+	kubectl wait --for condition=available --timeout=120s deploy/provider-percona-postgresql-pg-operator -n provider-system
 
 ##@ Local Development Cluster
 

@@ -1,0 +1,43 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-src
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  backup:
+    enabled: true
+    classRef:
+      name: percona-backup-postgresql
+    storages:
+      - storageRef:
+          name: minio-storage
+        # A schedule is required: the provider prunes storages that have neither
+        # schedules nor Backup CRs, which would disable backups before the
+        # on-demand Backup in this suite is created.
+        schedules:
+          - name: full
+            enabled: true
+            cron: "0 2 * * *"
+  topology:
+    type: cluster
+  components:
+    engine:
+      type: postgresql
+      replicas: 1
+      storage:
+        size: 1Gi
+      resources:
+        limits:
+          cpu: 600m
+          memory: 512Mi
+        requests:
+          cpu: 600m
+          memory: 512Mi
+    monitoring:
+      type: pmm
+      parameters:
+        monitoringConfigName: mc-pmm
+    proxy:
+      type: pgbouncer
+      replicas: 1

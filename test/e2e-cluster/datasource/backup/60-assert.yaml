@@ -1,0 +1,13 @@
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGBackup
+metadata:
+  name: pg-src-backup
+status:
+  state: Succeeded
+---
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: pg-src-backup
+status:
+  state: Succeeded

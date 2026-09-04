@@ -1,0 +1,23 @@
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: src-backup
+spec:
+  origin:
+    type: Instance
+    instanceRef:
+      name: src-pg-cluster
+  classRef:
+    name: pg
+  storageRef:
+    name: test-storage-s3
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGBackup
+metadata:
+  name: src-backup
+spec:
+  pgCluster: src-pg-cluster
+  repoName: repo1
+  options:
+    - --type=full
