@@ -161,8 +161,11 @@ func TestResolveBackupSource(t *testing.T) {
 	sourceBackup := &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: "src-backup", Namespace: "everest"},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceRef: apicommon.ObjectRef{Name: "pg-src"},
-			StorageRef:  apicommon.ObjectRef{Name: "minio"},
+			Origin: backupv1alpha1.BackupOrigin{
+				Type:        backupv1alpha1.BackupOriginTypeInstance,
+				InstanceRef: &apicommon.ObjectRef{Name: "pg-src"},
+			},
+			StorageRef: apicommon.ObjectRef{Name: "minio"},
 		},
 		Status: backupv1alpha1.BackupStatus{State: backupv1alpha1.BackupStateSucceeded},
 	}
