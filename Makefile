@@ -248,6 +248,7 @@ deploy-provider-ci: ## Deploy the provider via Helm for CI (IMG must already be 
 	helm upgrade --install provider-percona-postgresql $(CHART_DIR) \
 		--create-namespace \
 		--namespace provider-system \
+		--skip-crds \
 		--set image.repository=$(_IMG_REPO) \
 		--set image.tag=$(_IMG_TAG) \
 		--set image.pullPolicy=Never \
@@ -261,6 +262,7 @@ deploy-provider-e2e: ## Deploy the provider with PG operator for E2E tests.
 	helm upgrade --install provider-percona-postgresql $(CHART_DIR) \
 		--create-namespace \
 		--namespace provider-system \
+		--skip-crds \
 		--set image.repository=$(_IMG_REPO) \
 		--set image.tag=$(_IMG_TAG) \
 		--set image.pullPolicy=Never \
@@ -312,7 +314,7 @@ $(YQ): $(LOCALBIN)
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Install golangci-lint.
 $(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci-lint/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and target name. Usage:
 # $(call go-install-tool,<target>,<package>,<version>)
