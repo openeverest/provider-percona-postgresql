@@ -3,8 +3,10 @@ kind: Backup
 metadata:
   name: src-backup
 spec:
-  instanceRef:
-    name: src-pg-cluster
+  origin:
+    type: Instance
+    instanceRef:
+      name: src-pg-cluster
   classRef:
     name: pg
   storageRef:

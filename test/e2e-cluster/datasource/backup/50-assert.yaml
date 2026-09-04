@@ -3,8 +3,10 @@ kind: Backup
 metadata:
   name: pg-src-backup
 spec:
-  instanceRef:
-    name: pg-src
+  origin:
+    type: Instance
+    instanceRef:
+      name: pg-src
   classRef:
     name: percona-backup-postgresql
   storageRef:
