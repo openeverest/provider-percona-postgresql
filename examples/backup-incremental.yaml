@@ -7,8 +7,10 @@ kind: Backup
 metadata:
   name: my-incr-backup
 spec:
-  instanceRef:
-    name: example-instance
+  origin:
+    type: Instance
+    instanceRef:
+      name: example-instance
   classRef:
     name: pg
   storageRef:
