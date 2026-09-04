@@ -134,6 +134,7 @@ jobs:
         run: helm lint charts/provider-percona-postgresql
 
   test-integration:
+    name: Integration tests
     needs: [lint, build, verify, helm-lint]
     uses: ./.github/workflows/integration-test.yaml
     with:
@@ -143,11 +144,11 @@ jobs:
       needs_minio: true
     secrets: inherit
 
-  test-e2e-cluster-datasource-backup:
-    name: E2E Cluster / backup datasource
+  test-e2e-cluster:
+    name: E2E tests
     needs: [lint, build, verify, helm-lint]
     uses: ./.github/workflows/e2e-cluster-test.yaml
     with:
-      make_target: test-e2e-cluster-datasource-backup
-      suite: datasource
+      make_target: test-e2e-cluster
+      suite: e2e
     secrets: inherit
