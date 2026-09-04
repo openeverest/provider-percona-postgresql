@@ -121,7 +121,10 @@ func (p *Provider) Mirror(ctx context.Context, c client.Client, obj client.Objec
 			}},
 		},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceRef:  apicommon.ObjectRef{Name: pgBackup.Spec.PGCluster},
+			Origin: backupv1alpha1.BackupOrigin{
+				Type:        backupv1alpha1.BackupOriginTypeInstance,
+				InstanceRef: &apicommon.ObjectRef{Name: pgBackup.Spec.PGCluster},
+			},
 			ClassRef:     apicommon.ObjectRef{Name: instance.Spec.Backup.ClassRef.Name},
 			StorageRef:   apicommon.ObjectRef{Name: storageName},
 			ScheduleName: scheduleName,
