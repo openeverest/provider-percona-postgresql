@@ -64,11 +64,7 @@ jobs:
       - name: Import provider image into k3d
         run: make load-image
 
-      - name: Build OpenEverest controller
-        working-directory: _openeverest
-        run: make build-controller
-
-      - name: Build OpenEverest controller Docker image
+      - name: Build OpenEverest controller image
         working-directory: _openeverest
         run: make docker-build-controller
 
@@ -92,10 +88,6 @@ jobs:
         working-directory: _openeverest
         run: make deploy-test-controller
 
-      - name: Wait for OpenEverest deployment to be ready
-        working-directory: _openeverest
-        run: make wait-test-controller
-
       - name: Run ${{ inputs.make_target }}
         run: make ${{ inputs.make_target }}
 
@@ -110,4 +102,3 @@ jobs:
       - name: Cleanup test cluster
         if: always()
         run: make k3d-cluster-down
-
