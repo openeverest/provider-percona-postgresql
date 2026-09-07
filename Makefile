@@ -185,12 +185,16 @@ test-integration-backup-datasource: ## Run backup datasource integration tests.
 test-integration-env-up: openeverest-checkout ## Bootstrap the local environment for integration tests.
 	$(MAKE) k3d-cluster-up
 	$(MAKE) install-crds
+	kubectl apply -f ./minio.yaml
+	kubectl wait -n minio --for=condition=Ready pod/minio --timeout=180s
 	$(MAKE) docker-build
 	$(MAKE) load-image
+	$(MAKE) -C $(OPENEVEREST_DIR) build-controller
 	$(MAKE) -C $(OPENEVEREST_DIR) docker-build-controller
 	$(MAKE) load-openeverest-controller-image
-	$(MAKE) deploy-provider-ci PG_OPERATOR_REPLICA_COUNT=0
+	$(MAKE) deploy-provider-ci
 	$(MAKE) -C $(OPENEVEREST_DIR) deploy-test-controller
+	$(MAKE) -C $(OPENEVEREST_DIR) wait-test-controller
 
 .PHONY: test-integration-env-down
 test-integration-env-down: ## Tear down the local integration test environment.
@@ -310,7 +314,7 @@ $(YQ): $(LOCALBIN)
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Install golangci-lint.
 $(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci-lint/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and target name. Usage:
 # $(call go-install-tool,<target>,<package>,<version>)
