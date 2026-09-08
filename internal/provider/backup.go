@@ -163,7 +163,7 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 
 		backupType := resolveBackupType(backup)
 
-		opBackup := &pgv2.PerconaPGBackup{
+		opBackup = &pgv2.PerconaPGBackup{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      backup.Name,
 				Namespace: backup.Namespace,
