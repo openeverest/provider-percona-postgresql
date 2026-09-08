@@ -304,6 +304,9 @@ func (p *Provider) Sync(c *controller.Context) error {
 			cluster.Spec.InstanceSets[0].DataVolumeClaimSpec.StorageClassName = engine.Storage.StorageClass
 		}
 	}
+	if engine.SchedulingPolicy != nil && engine.SchedulingPolicy.Affinity != nil {
+		cluster.Spec.InstanceSets[0].Affinity = engine.SchedulingPolicy.Affinity
+	}
 	engineVersion := engine.Version
 	if engineVersion == "" {
 		engineVersion = bundleComponents[common.ComponentEngine]
