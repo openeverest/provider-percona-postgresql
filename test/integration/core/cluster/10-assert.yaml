@@ -9,6 +9,16 @@ spec:
     engine:
       type: postgresql
       replicas: 3
+      resources:
+        limits:
+          cpu: "1"
+          memory: 4G
+        requests:
+          cpu: 500m
+          memory: 2G
+      storage:
+        size: 25Gi
+        storageClass: standard
     proxy:
       type: pgbouncer
       replicas: 1
@@ -20,6 +30,18 @@ metadata:
 spec:
   instances:
     - replicas: 3
+      resources:
+        limits:
+          cpu: "1"
+          memory: 4G
+        requests:
+          cpu: 500m
+          memory: 2G
+      dataVolumeClaimSpec:
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 25Gi
   proxy:
     pgBouncer:
       replicas: 1

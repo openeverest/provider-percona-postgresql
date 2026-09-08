@@ -290,6 +290,20 @@ func (p *Provider) Sync(c *controller.Context) error {
 		cluster.Spec.InstanceSets = pgv2.PGInstanceSets{{Name: "instance1"}}
 	}
 	cluster.Spec.InstanceSets[0].Replicas = engine.Replicas
+	if engine.Resources != nil {
+		cluster.Spec.InstanceSets[0].Resources = *engine.Resources
+	}
+	if engine.Storage != nil {
+		if cluster.Spec.InstanceSets[0].DataVolumeClaimSpec.Resources.Requests == nil {
+			cluster.Spec.InstanceSets[0].DataVolumeClaimSpec.Resources.Requests = corev1.ResourceList{}
+		}
+		if !engine.Storage.Size.IsZero() {
+			cluster.Spec.InstanceSets[0].DataVolumeClaimSpec.Resources.Requests[corev1.ResourceStorage] = engine.Storage.Size
+		}
+		if engine.Storage.StorageClass != nil && *engine.Storage.StorageClass != "" {
+			cluster.Spec.InstanceSets[0].DataVolumeClaimSpec.StorageClassName = engine.Storage.StorageClass
+		}
+	}
 	engineVersion := engine.Version
 	if engineVersion == "" {
 		engineVersion = bundleComponents[common.ComponentEngine]
