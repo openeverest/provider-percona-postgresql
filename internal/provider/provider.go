@@ -368,6 +368,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 			return fmt.Errorf("cannot resolve default pgbouncer image from versions catalog")
 		}
 	}
+	applyServiceExpose(cluster, engine, proxy)
 
 	if err := applyMonitoringSettings(c, cluster, providerSpec); err != nil {
 		return err
@@ -670,6 +671,30 @@ func preserveRestoreDataSource(c *controller.Context, cluster *pgv2.PerconaPGClu
 	}
 
 	return nil
+}
+
+func applyServiceExpose(cluster *pgv2.PerconaPGCluster, engine, proxy corev1alpha1.ComponentSpec) {
+	svc := engine.Service
+	if proxy.Service != nil {
+		svc = proxy.Service
+	}
+	if svc == nil || cluster.Spec.Proxy == nil || cluster.Spec.Proxy.PGBouncer == nil {
+		return
+	}
+
+	expose := &pgv2.ServiceExpose{
+		Type: string(svc.ServiceType),
+	}
+	if len(svc.Annotations) > 0 {
+		expose.Annotations = svc.Annotations
+	}
+	if svc.LoadBalancerService != nil {
+		ranges := svc.LoadBalancerService.SourceRanges.NormalizedSourceRanges()
+		if len(ranges) > 0 {
+			expose.LoadBalancerSourceRanges = ranges
+		}
+	}
+	cluster.Spec.Proxy.PGBouncer.ServiceExpose = expose
 }
 
 func parseMajorVersion(version string) (int, bool) {

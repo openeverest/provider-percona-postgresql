@@ -69,9 +69,8 @@ spec:
             file: 21-update-cluster-affinity.yaml
         - script:
             content: |
-              kubectl wait instance/test-pg-cluster -n "$NAMESPACE" \
-                --for=jsonpath='{.spec.components.engine.schedulingPolicy.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight}'=100 --timeout=30s
-              sleep 3
+              kubectl wait perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" \
+                --for=jsonpath='{.spec.instances[0].affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight}'=100 --timeout=30s
               GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
               kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
                 -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
@@ -84,9 +83,8 @@ spec:
             file: 22-update-cluster-lb.yaml
         - script:
             content: |
-              kubectl wait instance/test-pg-cluster -n "$NAMESPACE" \
-                --for=jsonpath='{.spec.components.engine.service.serviceType}'=LoadBalancer --timeout=30s
-              sleep 3
+              kubectl wait perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" \
+                --for=jsonpath='{.spec.proxy.pgBouncer.expose.type}'=LoadBalancer --timeout=30s
               GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
               kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
                 -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
@@ -99,9 +97,8 @@ spec:
             file: 23-update-cluster-cluster-ip.yaml
         - script:
             content: |
-              kubectl wait instance/test-pg-cluster -n "$NAMESPACE" \
-                --for=jsonpath='{.spec.components.engine.service.serviceType}'=ClusterIP --timeout=30s
-              sleep 3
+              kubectl wait perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" \
+                --for=jsonpath='{.spec.proxy.pgBouncer.expose.type}'=ClusterIP --timeout=30s
               GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
               kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
                 -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
@@ -114,9 +111,8 @@ spec:
             file: 24-update-cluster-node-port.yaml
         - script:
             content: |
-              kubectl wait instance/test-pg-cluster -n "$NAMESPACE" \
-                --for=jsonpath='{.spec.components.engine.service.serviceType}'=NodePort --timeout=30s
-              sleep 3
+              kubectl wait perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" \
+                --for=jsonpath='{.spec.proxy.pgBouncer.expose.type}'=NodePort --timeout=30s
               GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
               kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
                 -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
