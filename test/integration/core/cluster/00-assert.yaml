@@ -1,0 +1,7 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provider-percona-postgresql-pg-operator
+  namespace: provider-system
+spec:
+  replicas: 0

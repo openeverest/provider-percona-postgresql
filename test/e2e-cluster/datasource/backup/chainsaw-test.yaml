@@ -1,0 +1,201 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: backup-restore
+spec:
+  description: |
+    Restore a Backup onto the same Instance: use cluster Minio, deploy PMM,
+    create an Instance with backups enabled, write data and take a Backup,
+    mutate the data, restore that Backup in place, and verify the original
+    seeded row is back.
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com,backup,perconapgbackups.pgv2.percona.com,restore,perconapgrestores.pgv2.percona.com,backupstorage,monitoringconfig -o yaml
+    - script:
+        content: kubectl get backupclass -o yaml
+    - script:
+        content: kubectl -n pmm get pods -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-percona-postgresql
+        tail: 100
+  steps:
+    - name: provider-operator-installed
+      try:
+        - assert:
+            file: 00-assert.yaml
+
+    - name: deploy-minio
+      try:
+        - script:
+            content: |
+              # Minio is installed by make test-integration-env-up (./minio.yaml).
+              # Do not apply testdata/minio: that PVC is 1Gi and the pod spec differs,
+              # so kubectl apply fails on an already-running env.
+              kubectl wait pod/minio --for=condition=Ready -n minio --timeout=120s
+              # env-up only creates bucket-1..6; BackupStorage uses everest-operator.
+              kubectl exec -n minio minio -c minio -- mkdir -p /data/everest-operator
+      catch:
+        - script:
+            content: kubectl get pods -n minio -o yaml
+        - script:
+            content: kubectl logs -n minio minio -c minio --tail=50
+
+    - name: deploy-pmm
+      try:
+        - script:
+            content: |
+              kubectl apply -f ${OPERATOR_ROOT_PATH}/test/testdata/pmm/deploy.yaml
+        - script:
+            timeout: 360s
+            content: |
+              kubectl -n pmm wait --for=condition=Ready pod -l app=pmm-server --timeout=360s
+        # Provision a PMM3 service-account token (default admin/admin creds),
+        # then create the credentials Secret the MonitoringConfig references.
+        # The token is dynamic, so the Secret is created via script rather
+        # than a static manifest; the MonitoringConfig itself lives in
+        # 20-install.yaml.
+        - script:
+            timeout: 120s
+            content: |
+              set -e
+              PMM_POD="$(kubectl -n pmm get pod -l app=pmm-server -o jsonpath='{.items[0].metadata.name}')"
+
+              # Create a service account and token via the PMM API, running
+              # entirely inside the pod so no host-side tooling is needed.
+              # Do not use UID: it is readonly in bash/sh.
+              TOKEN="$(kubectl -n pmm exec -i "${PMM_POD}" -- sh <<'EOF'
+              set -e
+              PMM_API='https://127.0.0.1:8443/graph/api'
+              SA_NAME="everest-$(date +%s)"
+
+              SA=$(curl -fsSk -u admin:admin \
+                -H 'Content-Type: application/json' \
+                -d "{\"name\":\"${SA_NAME}\",\"role\":\"Admin\"}" \
+                "${PMM_API}/serviceaccounts")
+              # Extract the "uid" value: strip up to '"uid":"', then from the next '"'.
+              SA_UID=${SA##*\"uid\":\"}
+              SA_UID=${SA_UID%%\"*}
+              test -n "${SA_UID}"
+
+              KEY=$(curl -fsSk -u admin:admin \
+                -H 'Content-Type: application/json' \
+                -d "{\"name\":\"${SA_NAME}-token\",\"role\":\"Admin\"}" \
+                "${PMM_API}/serviceaccounts/${SA_UID}/tokens")
+              # Extract the "key" value: strip up to '"key":"', then from the next '"'.
+              KEY=${KEY##*\"key\":\"}
+              KEY=${KEY%%\"*}
+              test -n "${KEY}"
+              echo "${KEY}"
+              EOF
+              )"
+
+              test -n "${TOKEN}"
+
+              kubectl -n ${NAMESPACE} create secret generic mc-pmm-secret \
+                --from-literal=apiKey="${TOKEN}" \
+                --dry-run=client -o yaml | kubectl apply -f -
+      catch:
+        - script:
+            content: kubectl -n pmm get pods -o yaml
+        - script:
+            content: kubectl -n pmm logs -l app=pmm-server --tail=100
+
+    - name: setup-backup
+      try:
+        - apply:
+            file: 20-install.yaml
+        - assert:
+            file: 20-assert.yaml
+
+    - name: create-source-instance
+      try:
+        - apply:
+            file: 30-create-source.yaml
+        - assert:
+            file: 30-assert.yaml
+
+    - name: source-cluster-ready
+      try:
+        - assert:
+            timeout: 360s
+            file: 40-assert.yaml
+
+    - name: create-source-postgresql-client
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              kubectl run -n "${NAMESPACE}" pg-src-client --env="NO_COLOR=1" --image=postgres:17 --restart=Never --command -- sleep 600
+              kubectl wait --for=condition=Ready pod/pg-src-client --timeout=60s -n ${NAMESPACE}
+      catch:
+        - script:
+            content: kubectl get pod/pg-src-client -n $NAMESPACE -o yaml
+
+    - name: seed-source-data
+      try:
+        - script:
+            content: |
+              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-src-conn -o jsonpath='{.data.uri}' | base64 --decode)"
+              kubectl exec pg-src-client -n ${NAMESPACE} -- psql "$CONN_URI" -v ON_ERROR_STOP=1 \
+                -c "CREATE TABLE IF NOT EXISTS test(id text primary key);" \
+                -c "INSERT INTO test(id) VALUES ('openeverest') ON CONFLICT (id) DO NOTHING;"
+
+    - name: create-backup
+      try:
+        - apply:
+            file: 50-create-backup.yaml
+        - assert:
+            file: 50-assert.yaml
+
+    - name: backup-complete
+      try:
+        - assert:
+            timeout: 360s
+            file: 60-assert.yaml
+
+    - name: mutate-source-data
+      try:
+        - script:
+            content: |
+              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-src-conn -o jsonpath='{.data.uri}' | base64 --decode)"
+              kubectl exec pg-src-client -n ${NAMESPACE} -- psql "$CONN_URI" -v ON_ERROR_STOP=1 \
+                -c "INSERT INTO test(id) VALUES ('after-backup') ON CONFLICT (id) DO NOTHING;"
+
+    - name: create-restore
+      try:
+        - apply:
+            file: 70-create-dest.yaml
+        - assert:
+            timeout: 360s
+            file: 70-assert.yaml
+
+    - name: restore-created
+      try:
+        - assert:
+            timeout: 360s
+            file: 80-assert.yaml
+
+    - name: restore-complete
+      try:
+        - assert:
+            timeout: 480s
+            file: 90-assert.yaml
+
+    - name: verify-restored-data
+      try:
+        - script:
+            timeout: 90s
+            content: |
+              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-src-conn -o jsonpath='{.data.uri}' | base64 --decode)"
+              found=$(kubectl exec pg-src-client -n ${NAMESPACE} -- psql "$CONN_URI" -tA -c "SELECT id FROM test ORDER BY id;")
+              echo "Found: $found"
+              test "$(echo "$found" | tr -d '[:space:]')" = "openeverest"
+
+    - name: cleanup
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              kubectl delete instance/pg-src -n $NAMESPACE --ignore-not-found || true
+              kubectl delete -f ${OPERATOR_ROOT_PATH}/test/testdata/pmm/deploy.yaml --ignore-not-found || true

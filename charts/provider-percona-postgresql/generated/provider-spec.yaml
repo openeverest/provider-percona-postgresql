@@ -26,12 +26,9 @@ spec:
           version: 1.25.2-1
     pmm:
       versions:
-        - default: false
-          image: percona/pmm-client:2.44.1-1
-          version: 2.44.1-1
         - default: true
-          image: percona/pmm-client:3.8.0
-          version: 3.8.0
+          image: percona/pmm-client:3.7.1
+          version: 3.7.1
     postgresql:
       versions:
         - default: true
@@ -203,77 +200,77 @@ spec:
   versions:
     - components:
         engine: 18.4-1
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       default: true
       name: 18.4-1
     - components:
         engine: 14.20-2
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 14.20-2
     - components:
         engine: 14.22-1
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 14.22-1
     - components:
         engine: 14.23-1
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 14.23-1
     - components:
         engine: 15.15-2
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 15.15-2
     - components:
         engine: 15.17-1
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 15.17-1
     - components:
         engine: 15.18-1
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 15.18-1
     - components:
         engine: 16.11-2
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 16.11-2
     - components:
         engine: 16.13-1
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 16.13-1
     - components:
         engine: 16.14-1
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 16.14-1
     - components:
         engine: 17.7-2
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 17.7-2
     - components:
         engine: 17.9-1
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 17.9-1
     - components:
         engine: 17.10-1
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 17.10-1
     - components:
         engine: 18.1-3
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 18.1-3
     - components:
         engine: 18.3-1
-        monitoring: 3.8.0
+        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 18.3-1

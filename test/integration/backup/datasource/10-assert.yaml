@@ -1,0 +1,65 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: src-pg-cluster
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  backup:
+    enabled: true
+    classRef:
+      name: pg
+    storages:
+    - storageRef:
+        name: test-storage-s3
+      schedules:
+      - name: full
+        enabled: true
+        cron: "0 2 * * *"
+  components:
+    engine:
+      type: postgresql
+      replicas: 3
+      resources:
+        limits:
+          cpu: "1"
+          memory: 4G
+        requests:
+          cpu: 500m
+          memory: 2G
+      storage:
+        size: 25Gi
+        storageClass: standard
+    proxy:
+      type: pgbouncer
+      replicas: 1
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: src-pg-cluster
+spec:
+  instances:
+    - replicas: 3
+  proxy:
+    pgBouncer:
+      replicas: 1
+  backups:
+    enabled: true
+    pgbackrest:
+      repos:
+        - name: repo1
+          s3:
+            bucket: test-backup-bucket
+            region: us-east-1
+            endpoint: http://fake
+          schedules:
+            full: "0 2 * * *"
+      global:
+        repo1-s3-uri-style: path
+        repo1-storage-verify-tls: "n"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: src-pg-cluster-pgbackrest-repo1-creds

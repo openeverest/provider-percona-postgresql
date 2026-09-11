@@ -82,6 +82,9 @@ func applyMonitoringSettings(c *controller.Context, cluster *pgv2.PerconaPGClust
 		CustomClusterName: c.Name(),
 		ImagePullPolicy:   corev1.PullIfNotPresent,
 	}
+	if monitoringComponent.Resources != nil {
+		cluster.Spec.PMM.Resources = *monitoringComponent.Resources
+	}
 	return nil
 }
 

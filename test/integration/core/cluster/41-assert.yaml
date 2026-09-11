@@ -1,0 +1,30 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-cluster
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  components:
+    engine:
+      type: postgresql
+      replicas: 1
+    proxy:
+      type: pgbouncer
+      replicas: 1
+status:
+  phase: Ready
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: test-pg-cluster
+status:
+  postgres:
+    size: 1
+    ready: 1
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-pg-cluster-conn

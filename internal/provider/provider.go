@@ -119,7 +119,27 @@ func New() *Provider {
 
 // FieldIndexes registers indexes required by helper queries used in status computation.
 func (p *Provider) FieldIndexes() []controller.FieldIndex {
-	return nil
+	return []controller.FieldIndex{
+		{
+			Object:    &corev1alpha1.Instance{},
+			FieldPath: monitoringConfigRefFieldPath,
+			Extractor: func(obj client.Object) []string {
+				instance, ok := obj.(*corev1alpha1.Instance)
+				if !ok {
+					return nil
+				}
+				component, ok := instance.Spec.Components[common.ComponentMonitoring]
+				if !ok {
+					return nil
+				}
+				name, err := monitoringConfigNameFromComponent(component)
+				if err != nil || name == "" {
+					return nil
+				}
+				return []string{name}
+			},
+		},
+	}
 }
 
 // Validate checks if the Instance spec is valid.
@@ -270,6 +290,23 @@ func (p *Provider) Sync(c *controller.Context) error {
 		cluster.Spec.InstanceSets = pgv2.PGInstanceSets{{Name: "instance1"}}
 	}
 	cluster.Spec.InstanceSets[0].Replicas = engine.Replicas
+	if engine.Resources != nil {
+		cluster.Spec.InstanceSets[0].Resources = *engine.Resources
+	}
+	if engine.Storage != nil {
+		if cluster.Spec.InstanceSets[0].DataVolumeClaimSpec.Resources.Requests == nil {
+			cluster.Spec.InstanceSets[0].DataVolumeClaimSpec.Resources.Requests = corev1.ResourceList{}
+		}
+		if !engine.Storage.Size.IsZero() {
+			cluster.Spec.InstanceSets[0].DataVolumeClaimSpec.Resources.Requests[corev1.ResourceStorage] = engine.Storage.Size
+		}
+		if engine.Storage.StorageClass != nil && *engine.Storage.StorageClass != "" {
+			cluster.Spec.InstanceSets[0].DataVolumeClaimSpec.StorageClassName = engine.Storage.StorageClass
+		}
+	}
+	if engine.SchedulingPolicy != nil && engine.SchedulingPolicy.Affinity != nil {
+		cluster.Spec.InstanceSets[0].Affinity = engine.SchedulingPolicy.Affinity
+	}
 	engineVersion := engine.Version
 	if engineVersion == "" {
 		engineVersion = bundleComponents[common.ComponentEngine]
@@ -331,6 +368,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 			return fmt.Errorf("cannot resolve default pgbouncer image from versions catalog")
 		}
 	}
+	applyServiceExpose(cluster, engine, proxy)
 
 	if err := applyMonitoringSettings(c, cluster, providerSpec); err != nil {
 		return err
@@ -398,10 +436,17 @@ func (p *Provider) Sync(c *controller.Context) error {
 	}
 	if restoring {
 		l.Info("Restore is in progress, skipping cluster apply", "cluster", c.Name())
+		if _, err := c.ReconcileDataSource(); err != nil {
+			return err
+		}
 		return backupConfigErr
 	}
 
 	if err := c.Apply(cluster); err != nil {
+		return err
+	}
+
+	if _, err := c.ReconcileDataSource(); err != nil {
 		return err
 	}
 
@@ -626,6 +671,30 @@ func preserveRestoreDataSource(c *controller.Context, cluster *pgv2.PerconaPGClu
 	}
 
 	return nil
+}
+
+func applyServiceExpose(cluster *pgv2.PerconaPGCluster, engine, proxy corev1alpha1.ComponentSpec) {
+	svc := engine.Service
+	if proxy.Service != nil {
+		svc = proxy.Service
+	}
+	if svc == nil || cluster.Spec.Proxy == nil || cluster.Spec.Proxy.PGBouncer == nil {
+		return
+	}
+
+	expose := &pgv2.ServiceExpose{
+		Type: string(svc.ServiceType),
+	}
+	if len(svc.Annotations) > 0 {
+		expose.Annotations = svc.Annotations
+	}
+	if svc.LoadBalancerService != nil {
+		ranges := svc.LoadBalancerService.SourceRanges.NormalizedSourceRanges()
+		if len(ranges) > 0 {
+			expose.LoadBalancerSourceRanges = ranges
+		}
+	}
+	cluster.Spec.Proxy.PGBouncer.ServiceExpose = expose
 }
 
 func parseMajorVersion(version string) (int, bool) {

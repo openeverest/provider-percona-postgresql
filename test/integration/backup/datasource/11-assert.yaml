@@ -1,0 +1,20 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: src-pg-cluster
+status:
+  phase: Ready
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: src-pg-cluster
+status:
+  postgres:
+    size: 3
+    ready: 3
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: src-pg-cluster-conn

@@ -1,0 +1,27 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-cluster
+status:
+  phase: Ready
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: test-pg-cluster
+spec:
+  pmm:
+    enabled: true
+    serverHost: pmm.example.invalid
+    image: percona/pmm-client:3.7.1
+    secret: test-pg-cluster-pmm-secret
+    customClusterName: test-pg-cluster
+status:
+  postgres:
+    size: 3
+    ready: 3
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-pg-cluster-conn
