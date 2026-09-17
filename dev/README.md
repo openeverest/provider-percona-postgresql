@@ -68,14 +68,14 @@ All settings live in `dev/.env` (see `dev/.env.example`). Common options:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `INSTALL_OPENEVEREST` | `true` | Install the released OpenEverest core. |
-| `OPENEVEREST_VERSION` | `2.0.0-dev.1` | Pin a specific core chart version. |
+| `OPENEVEREST_VERSION` | `2.0.0-dev.3` | Pin a specific core chart version. |
 | `PROVIDER_NAMESPACE` | `default` | Namespace for the provider + DB operator. |
 | `ENABLE_MINIO` | `false` | Deploy MinIO + a `BackupStorage` CR for backups. |
 | `K8S_CONTEXT` | _(unset)_ | Restrict Tilt to a specific Kubernetes context. |
 | `DOCKER_REGISTRY_URL` | _(unset)_ | Push images here instead of the cluster's local registry. |
 
 > **Note:** While OpenEverest v2 is in pre-release, the Helm repository only
-> publishes pre-release tags (e.g. `2.0.0-dev.1`). Helm's "latest" resolution
+> publishes pre-release tags (e.g. `2.0.0-dev.3`). Helm's "latest" resolution
 > skips pre-releases, so you must set `OPENEVEREST_VERSION` explicitly until
 > v2.0.0 is generally available.
 
