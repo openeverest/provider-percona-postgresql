@@ -40,7 +40,7 @@ install_openeverest = str2bool(os.getenv('INSTALL_OPENEVEREST', 'true'))
 
 # Released OpenEverest core version to install. Default is pinned to a v2
 # pre-release because Helm's "latest" skips pre-release tags.
-openeverest_version = os.getenv('OPENEVEREST_VERSION', '2.0.0-dev.1')
+openeverest_version = os.getenv('OPENEVEREST_VERSION', '2.0.0-dev.3')
 
 # Helm repository that hosts the OpenEverest core chart.
 openeverest_helm_repo = os.getenv(

@@ -75,6 +75,8 @@ spec:
       type: pmm
     proxy:
       type: pgbouncer
+  release:
+    version: 0.2.0
   topologies:
     cluster:
       components:
