@@ -79,25 +79,26 @@ Stateful workloads additionally report:
 
 ## Installation
 
-> [!NOTE]
-> There is no published chart yet. Until the first release, install from a checkout.
+The provider chart is published as an OCI artifact to GitHub Container Registry:
 
 ```bash
-git clone https://github.com/openeverest/provider-percona-postgresql.git
-cd provider-percona-postgresql
-helm dependency build charts/provider-percona-postgresql
-helm install provider-percona-postgresql charts/provider-percona-postgresql \
+helm install provider-percona-postgresql \
+  oci://ghcr.io/openeverest/charts/provider-percona-postgresql \
+  --version 0.2.0 \
   --namespace everest-system
 ```
-
-`make helm-install` does the same thing against your current kube context.
 
 - The Percona Operator for PostgreSQL is bundled as a chart dependency and installed by
   default. Set `pg-operator.enabled=false` when the cluster already runs it.
 
-Uninstall:
+To install from a checkout instead, `make helm-install` builds the chart dependencies
+and installs it against your current kube context.
+
+Upgrade and uninstall:
 
 ```bash
+helm upgrade provider-percona-postgresql \
+  oci://ghcr.io/openeverest/charts/provider-percona-postgresql --version 0.2.0
 helm uninstall provider-percona-postgresql --namespace everest-system
 ```
 
