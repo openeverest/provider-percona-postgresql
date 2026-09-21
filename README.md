@@ -62,7 +62,7 @@ provider itself is covered under [Installation](#installation).
 | Horizontal scaling | ✅ | `spec.components.<name>.replicas` |
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.<name>.resources` |
 | Version upgrades | ✅ | of the deployed PostgreSQL version — change `spec.version`; see [Versions](#versions) |
-| Custom configuration | ❌ | not yet exposed through the Instance API |
+| Custom configuration | ✅ | `spec.components.engine.parameters.configuration` — see [Custom PostgreSQL configuration](#custom-postgresql-configuration) |
 | Monitoring | ❌ | planned |
 | TLS | ⚠️ | the operator provisions certificates; nothing is exposed through the Instance API |
 
@@ -187,6 +187,44 @@ Source of truth: [definition/versions.yaml](definition/versions.yaml).
 PostgreSQL major-version upgrades require a dump/restore or the operator's upgrade job — they
 are not a simple `spec.version` bump. Minor upgrades within a major version are rolling.
 
+## Custom PostgreSQL configuration
+
+PostgreSQL exposes hundreds of tunable settings, so this provider does not restrict users to a
+predefined list of fields. Instead, `spec.components.engine.parameters.configuration` accepts a
+free-form YAML document of parameter key/value pairs, which are applied on top of, and
+override, the operator's built-in defaults (e.g. PostgreSQL defaults to
+`max_connections=100`, `shared_buffers=128MB`, `wal_level=replica`):
+
+```yaml
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: my-instance
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  components:
+    engine:
+      type: postgresql
+      replicas: 3
+      storage:
+        size: 10Gi
+      parameters:
+        configuration: |
+          max_connections: "500"
+          shared_buffers: 1GB
+          work_mem: 32MB
+          wal_level: logical
+    proxy:
+      type: pgbouncer
+      replicas: 2
+```
+
+Under the hood, these parameters are passed through to Patroni's dynamic configuration
+(`spec.patroni.dynamicConfiguration.postgresql.parameters`) on the `PerconaPGCluster` resource.
+See [examples/instance-custom-config.yaml](examples/instance-custom-config.yaml) for a
+standalone example.
+
 ## Configuration
 
 - **Chart values:** [charts/provider-percona-postgresql/values.yaml](charts/provider-percona-postgresql/values.yaml)
@@ -195,8 +233,9 @@ are not a simple `spec.version` bump. Minor upgrades within a major version are 
   (`kubectl get provider provider-percona-postgresql -o yaml`). The API server and the UI
   validate user input against these schemas.
 
-This provider currently exposes no technology-specific parameters beyond the shared
-component fields (replicas, resources, storage).
+This provider currently exposes one technology-specific parameter beyond the shared
+component fields (replicas, resources, storage): `engine.parameters.configuration`,
+covered in [Custom PostgreSQL configuration](#custom-postgresql-configuration).
 
 ## Development
 

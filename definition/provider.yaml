@@ -5,6 +5,7 @@
 components:
     engine:
         type: postgresql
+        parametersSchema: PostgresqlParameters
     proxy:
         type: pgbouncer
     monitoring:

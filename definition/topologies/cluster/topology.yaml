@@ -125,8 +125,25 @@ ui:
                         displayEmpty: true
                     dataSource:
                         provider: monitoringConfigs
+        advanced:
+            label: Advanced Configuration
+            description: Fine-tune PostgreSQL by overriding its default configuration parameters.
+            components:
+                configuration:
+                    uiType: text
+                    path: spec.components.engine.parameters.configuration
+                    fieldParams:
+                        label: Custom PostgreSQL configuration
+                        placeholder: |
+                            max_connections: "500"
+                            shared_buffers: 1GB
+                            wal_level: logical
+                        multiline: true
+                        minRows: 3
+                        maxRows: 8
     sectionsOrder:
         - databaseVersion
         - resources
         - proxy
         - monitoring
+        - advanced

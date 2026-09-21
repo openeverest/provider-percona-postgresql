@@ -14,9 +14,18 @@ package components
 type PgbouncerParameters struct{}
 
 // PostgresqlParameters defines custom parameters for postgresql components.
-// Add fields here when the postgresql component type needs custom parameters
-// beyond what the base Instance spec provides.
-type PostgresqlParameters struct{}
+type PostgresqlParameters struct {
+	// Configuration allows specifying custom PostgreSQL configuration
+	// parameters as a YAML document of flat key/value pairs, e.g.:
+	//
+	//   max_connections: "500"
+	//   shared_buffers: 1GB
+	//   wal_level: replica
+	//
+	// applied on top of, and overrides, the operator's built-in defaults.
+	// +optional
+	Configuration string `json:"configuration,omitempty"`
+}
 
 // PmmParameters defines custom parameters for PMM monitoring.
 type PmmParameters struct {
