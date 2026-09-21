@@ -75,3 +75,23 @@ func TestValidateEngineConfiguration_NoConfiguration(t *testing.T) {
 
 	assert.NoError(t, validateEngineConfiguration(corev1alpha1.ComponentSpec{}))
 }
+
+func TestEngineConfigurationFromComponent_ErrorsDoNotMentionJSON(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"plain scalar (not a mapping)": "afsdasdfasd",
+		"list instead of a mapping":    "- a\n- b\n",
+		"bad indentation":              "foo: bar\n  baz: qux\n",
+		"tab indentation":              "foo:\n\tbar: baz\n",
+	}
+
+	for name, configuration := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := engineConfigurationFromComponent(engineWithConfiguration(t, configuration))
+			require.Error(t, err)
+		})
+	}
+}

@@ -187,44 +187,6 @@ Source of truth: [definition/versions.yaml](definition/versions.yaml).
 PostgreSQL major-version upgrades require a dump/restore or the operator's upgrade job — they
 are not a simple `spec.version` bump. Minor upgrades within a major version are rolling.
 
-## Custom PostgreSQL configuration
-
-PostgreSQL exposes hundreds of tunable settings, so this provider does not restrict users to a
-predefined list of fields. Instead, `spec.components.engine.parameters.configuration` accepts a
-free-form YAML document of parameter key/value pairs, which are applied on top of, and
-override, the operator's built-in defaults (e.g. PostgreSQL defaults to
-`max_connections=100`, `shared_buffers=128MB`, `wal_level=replica`):
-
-```yaml
-apiVersion: core.openeverest.io/v1alpha1
-kind: Instance
-metadata:
-  name: my-instance
-spec:
-  providerRef:
-    name: provider-percona-postgresql
-  components:
-    engine:
-      type: postgresql
-      replicas: 3
-      storage:
-        size: 10Gi
-      parameters:
-        configuration: |
-          max_connections: "500"
-          shared_buffers: 1GB
-          work_mem: 32MB
-          wal_level: logical
-    proxy:
-      type: pgbouncer
-      replicas: 2
-```
-
-Under the hood, these parameters are passed through to Patroni's dynamic configuration
-(`spec.patroni.dynamicConfiguration.postgresql.parameters`) on the `PerconaPGCluster` resource.
-See [examples/instance-custom-config.yaml](examples/instance-custom-config.yaml) for a
-standalone example.
-
 ## Configuration
 
 - **Chart values:** [charts/provider-percona-postgresql/values.yaml](charts/provider-percona-postgresql/values.yaml)
@@ -292,6 +254,7 @@ kubectl logs -n everest-system deploy/provider-percona-postgresql -f
 | Symptom | Where to look |
 |---|---|
 | `Instance` stuck in `Creating` | `kubectl describe instance <name>` conditions, then the provider logs |
+| `Instance` in `Phase: Failed` | `kubectl describe instance <name>` Events (look for `ValidationFailed`), then the provider logs |
 | No `Provider` resource in the cluster | Is the chart installed? Check the provider deployment logs |
 | `Instance` ignored entirely | `spec.providerRef.name` must be `provider-percona-postgresql` |
 | `PerconaPGCluster` created but no pods | Inspect the `PerconaPGCluster` status — the failure is upstream in the operator |

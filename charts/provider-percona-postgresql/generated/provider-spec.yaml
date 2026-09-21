@@ -110,6 +110,10 @@ spec:
                   wal_level: logical
               path: spec.components.engine.parameters.configuration
               uiType: text
+              validation:
+                regex:
+                  message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_connections: "500"'
+                  pattern: ^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$
           description: Fine-tune PostgreSQL by overriding its default configuration parameters.
           label: Advanced Configuration
         databaseVersion:

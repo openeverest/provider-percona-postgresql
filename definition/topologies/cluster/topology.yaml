@@ -141,6 +141,10 @@ ui:
                         multiline: true
                         minRows: 3
                         maxRows: 8
+                    validation:
+                        regex:
+                            pattern: '^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$'
+                            message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_connections: "500"'
     sectionsOrder:
         - databaseVersion
         - resources
