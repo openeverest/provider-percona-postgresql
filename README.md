@@ -63,7 +63,7 @@ provider itself is covered under [Installation](#installation).
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.<name>.resources` |
 | Version upgrades | ✅ | of the deployed PostgreSQL version — change `spec.version`; see [Versions](#versions) |
 | Custom configuration | ❌ | not yet exposed through the Instance API |
-| Monitoring | ❌ | planned |
+| Monitoring | ✅ | PMM, via `spec.components.monitoring` referencing a `MonitoringConfig` |
 | TLS | ⚠️ | the operator provisions certificates; nothing is exposed through the Instance API |
 
 Stateful workloads additionally report:
@@ -72,10 +72,10 @@ Stateful workloads additionally report:
 |---|---|---|
 | Persistent storage | ✅ | `spec.components.engine.storage` |
 | Storage expansion | ✅ | when the StorageClass allows volume expansion |
-| Backups (on demand) | ❌ | planned; pgBackRest images are already catalogued |
-| Backups (scheduled) | ❌ | planned |
-| Point-in-time recovery | ❌ | planned |
-| Restore | ❌ | planned |
+| Backups (on demand) | ✅ | via the `Backup` API |
+| Backups (scheduled) | ✅ | via `spec.backup.schedules` on the `Instance` |
+| Point-in-time recovery | ✅ | via the `Restore` API (`dataSource.pointInTime`) |
+| Restore | ✅ | via the `Restore` API (`dataSource.backup` or `dataSource.pointInTime`) |
 
 ## Installation
 
