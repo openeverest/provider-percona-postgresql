@@ -64,6 +64,12 @@ spec:
           version: 18.3-1
   components:
     engine:
+      parametersSchema:
+        openAPIV3Schema:
+          properties:
+            configuration:
+              type: string
+          type: object
       type: postgresql
     monitoring:
       parametersSchema:
@@ -90,6 +96,26 @@ spec:
   uiSchema:
     cluster:
       sections:
+        advanced:
+          components:
+            configuration:
+              fieldParams:
+                label: Custom PostgreSQL configuration
+                maxRows: 8
+                minRows: 3
+                multiline: true
+                placeholder: |
+                  max_connections: "500"
+                  shared_buffers: 1GB
+                  wal_level: logical
+              path: spec.components.engine.parameters.configuration
+              uiType: text
+              validation:
+                regex:
+                  message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_connections: "500"'
+                  pattern: ^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$
+          description: Fine-tune PostgreSQL by overriding its default configuration parameters.
+          label: Advanced Configuration
         databaseVersion:
           components:
             version:
@@ -199,6 +225,7 @@ spec:
         - resources
         - proxy
         - monitoring
+        - advanced
   versions:
     - components:
         engine: 18.4-1
