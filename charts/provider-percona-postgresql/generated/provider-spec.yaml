@@ -124,6 +124,28 @@ spec:
           label: Monitoring
         proxy:
           components:
+            proxyLimits:
+              components:
+                cpu:
+                  fieldParams:
+                    defaultValue: 1
+                    label: CPU
+                  path: spec.components.proxy.resources.limits.cpu
+                  uiType: number
+                  validation:
+                    min: 1
+                memory:
+                  fieldParams:
+                    badge: Gi
+                    badgeToApi: true
+                    defaultValue: 1
+                    label: Memory
+                  path: spec.components.proxy.resources.limits.memory
+                  uiType: number
+                  validation:
+                    min: 1
+              groupType: line
+              uiType: group
             proxyNodes:
               fieldParams:
                 defaultValue: 2
@@ -134,6 +156,26 @@ spec:
                 int: true
                 min: 1
                 required: true
+            proxyRequests:
+              components:
+                cpu:
+                  fieldParams:
+                    label: CPU Request
+                  path: spec.components.proxy.resources.requests.cpu
+                  uiType: number
+                  validation:
+                    min: 0
+                memory:
+                  fieldParams:
+                    badge: Gi
+                    badgeToApi: true
+                    label: Memory Request
+                  path: spec.components.proxy.resources.requests.memory
+                  uiType: number
+                  validation:
+                    min: 0
+              groupType: line
+              uiType: group
             proxyType:
               fieldParams:
                 defaultValue: pgbouncer
@@ -148,6 +190,8 @@ spec:
           componentsOrder:
             - proxyType
             - proxyNodes
+            - proxyLimits
+            - proxyRequests
           description: Configure a single proxy type for the cluster.
           label: Proxy
         resources:
@@ -160,6 +204,26 @@ spec:
               uiType: number
               validation:
                 min: 1
+            requests:
+              components:
+                cpu:
+                  fieldParams:
+                    label: CPU Request
+                  path: spec.components.engine.resources.requests.cpu
+                  uiType: number
+                  validation:
+                    min: 0
+                memory:
+                  fieldParams:
+                    badge: Gi
+                    badgeToApi: true
+                    label: Memory Request
+                  path: spec.components.engine.resources.requests.memory
+                  uiType: number
+                  validation:
+                    min: 0
+              groupType: line
+              uiType: group
             resources:
               components:
                 cpu:

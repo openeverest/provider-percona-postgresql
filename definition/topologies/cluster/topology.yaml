@@ -83,6 +83,26 @@ ui:
                                 min: 1
                     groupType: line
                     uiType: group
+                requests:
+                    components:
+                        cpu:
+                            fieldParams:
+                                label: CPU Request
+                            path: spec.components.engine.resources.requests.cpu
+                            uiType: number
+                            validation:
+                                min: 0
+                        memory:
+                            fieldParams:
+                                label: Memory Request
+                                badge: Gi
+                                badgeToApi: true
+                            path: spec.components.engine.resources.requests.memory
+                            uiType: number
+                            validation:
+                                min: 0
+                    groupType: line
+                    uiType: group
             description: Configure the resources your database will have access to.
             label: Resources
         proxy:
@@ -110,9 +130,53 @@ ui:
                 min: 1
                 int: true
                 required: true
+            proxyLimits:
+              uiType: group
+              groupType: line
+              components:
+                cpu:
+                  uiType: number
+                  path: spec.components.proxy.resources.limits.cpu
+                  fieldParams:
+                    label: CPU
+                    defaultValue: 1
+                  validation:
+                    min: 1
+                memory:
+                  uiType: number
+                  path: spec.components.proxy.resources.limits.memory
+                  fieldParams:
+                    label: Memory
+                    defaultValue: 1
+                    badge: Gi
+                    badgeToApi: true
+                  validation:
+                    min: 1
+            proxyRequests:
+              uiType: group
+              groupType: line
+              components:
+                cpu:
+                  uiType: number
+                  path: spec.components.proxy.resources.requests.cpu
+                  fieldParams:
+                    label: CPU Request
+                  validation:
+                    min: 0
+                memory:
+                  uiType: number
+                  path: spec.components.proxy.resources.requests.memory
+                  fieldParams:
+                    label: Memory Request
+                    badge: Gi
+                    badgeToApi: true
+                  validation:
+                    min: 0
           componentsOrder:
             - proxyType
             - proxyNodes
+            - proxyLimits
+            - proxyRequests
         monitoring:
             label: Monitoring
             description: Attach a MonitoringConfig to collect metrics.
