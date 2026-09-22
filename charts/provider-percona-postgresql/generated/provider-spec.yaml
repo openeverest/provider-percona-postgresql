@@ -196,6 +196,16 @@ spec:
           label: Proxy
         resources:
           components:
+            diskSize:
+              fieldParams:
+                badge: Gi
+                badgeToApi: true
+                defaultValue: 25
+                label: Disk Size
+              path: spec.components.engine.storage.size
+              uiType: number
+              validation:
+                min: 1
             numberOfNodes:
               fieldParams:
                 defaultValue: 2
@@ -204,7 +214,29 @@ spec:
               uiType: number
               validation:
                 min: 1
-            requests:
+            resourcesLimits:
+              components:
+                cpu:
+                  fieldParams:
+                    defaultValue: 1
+                    label: CPU
+                  path: spec.components.engine.resources.limits.cpu
+                  uiType: number
+                  validation:
+                    min: 1
+                memory:
+                  fieldParams:
+                    badge: Gi
+                    badgeToApi: true
+                    defaultValue: 2
+                    label: Memory
+                  path: spec.components.engine.resources.limits.memory
+                  uiType: number
+                  validation:
+                    min: 1
+              groupType: line
+              uiType: group
+            resourcesRequests:
               components:
                 cpu:
                   fieldParams:
@@ -224,38 +256,11 @@ spec:
                     min: 0
               groupType: line
               uiType: group
-            resources:
-              components:
-                cpu:
-                  fieldParams:
-                    defaultValue: 1
-                    label: CPU
-                  path: spec.components.engine.resources.limits.cpu
-                  uiType: number
-                  validation:
-                    min: 1
-                disk:
-                  fieldParams:
-                    badge: Gi
-                    badgeToApi: true
-                    defaultValue: 25
-                    label: Disk
-                  path: spec.components.engine.storage.size
-                  uiType: number
-                  validation:
-                    min: 1
-                memory:
-                  fieldParams:
-                    badge: Gi
-                    badgeToApi: true
-                    defaultValue: 2
-                    label: Memory
-                  path: spec.components.engine.resources.limits.memory
-                  uiType: number
-                  validation:
-                    min: 1
-              groupType: line
-              uiType: group
+          componentsOrder:
+            - numberOfNodes
+            - diskSize
+            - resourcesLimits
+            - resourcesRequests
           description: Configure the resources your database will have access to.
           label: Resources
       sectionsOrder:

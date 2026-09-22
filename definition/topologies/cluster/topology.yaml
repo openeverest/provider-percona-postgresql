@@ -51,23 +51,23 @@ ui:
                     uiType: number
                     validation:
                         min: 1
-                resources:
+                diskSize:
+                    fieldParams:
+                        label: Disk Size
+                        defaultValue: 25
+                        badge: Gi
+                        badgeToApi: true
+                    path: spec.components.engine.storage.size
+                    uiType: number
+                    validation:
+                      min: 1
+                resourcesLimits:
                     components:
                         cpu:
                             fieldParams:
                                 label: CPU
                                 defaultValue: 1
                             path: spec.components.engine.resources.limits.cpu
-                            uiType: number
-                            validation:
-                                min: 1
-                        disk:
-                            fieldParams:
-                                label: Disk
-                                defaultValue: 25
-                                badge: Gi
-                                badgeToApi: true
-                            path: spec.components.engine.storage.size
                             uiType: number
                             validation:
                                 min: 1
@@ -83,7 +83,7 @@ ui:
                                 min: 1
                     groupType: line
                     uiType: group
-                requests:
+                resourcesRequests:
                     components:
                         cpu:
                             fieldParams:
@@ -105,6 +105,11 @@ ui:
                     uiType: group
             description: Configure the resources your database will have access to.
             label: Resources
+            componentsOrder:
+              - numberOfNodes
+              - diskSize
+              - resourcesLimits
+              - resourcesRequests
         proxy:
           label: "Proxy"
           description: "Configure a single proxy type for the cluster."
