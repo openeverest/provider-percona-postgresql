@@ -293,6 +293,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 	if engine.Resources != nil {
 		cluster.Spec.InstanceSets[0].Resources = *engine.Resources
 	}
+	defaultRequestsToLimits(&cluster.Spec.InstanceSets[0].Resources)
 	if engine.Storage != nil {
 		if cluster.Spec.InstanceSets[0].DataVolumeClaimSpec.Resources.Requests == nil {
 			cluster.Spec.InstanceSets[0].DataVolumeClaimSpec.Resources.Requests = corev1.ResourceList{}
@@ -350,6 +351,10 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return fmt.Errorf("instance spec has unsupported %q component type %q; only %q is supported", common.ComponentProxy, proxyType, controller.GetComponentType(providerSpec, common.ComponentProxy))
 	}
 	cluster.Spec.Proxy.PGBouncer.Replicas = proxy.Replicas
+	if proxy.Resources != nil {
+		cluster.Spec.Proxy.PGBouncer.Resources = *proxy.Resources
+	}
+	defaultRequestsToLimits(&cluster.Spec.Proxy.PGBouncer.Resources)
 	if proxy.Image != "" {
 		cluster.Spec.Proxy.PGBouncer.Image = proxy.Image
 	} else if cluster.Spec.Proxy.PGBouncer.Image == "" {
@@ -671,6 +676,21 @@ func preserveRestoreDataSource(c *controller.Context, cluster *pgv2.PerconaPGClu
 	}
 
 	return nil
+}
+
+func defaultRequestsToLimits(res *corev1.ResourceRequirements) {
+	if res == nil || len(res.Limits) == 0 {
+		return
+	}
+	for name, limit := range res.Limits {
+		if _, ok := res.Requests[name]; ok {
+			continue
+		}
+		if res.Requests == nil {
+			res.Requests = corev1.ResourceList{}
+		}
+		res.Requests[name] = limit
+	}
 }
 
 func applyServiceExpose(cluster *pgv2.PerconaPGCluster, engine, proxy corev1alpha1.ComponentSpec) {
