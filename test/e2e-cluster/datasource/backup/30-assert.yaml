@@ -38,10 +38,6 @@ spec:
         limits:
           cpu: 200m
           memory: 128Mi
-        #defaults to limits
-        requests:
-          cpu: 200m
-          memory: 128Mi
 ---
 apiVersion: pgv2.percona.com/v2
 kind: PerconaPGCluster
@@ -88,6 +84,7 @@ spec:
         limits:
           cpu: 200m
           memory: 128Mi
+        #defaults to limits
         requests:
           cpu: 200m
           memory: 128Mi
