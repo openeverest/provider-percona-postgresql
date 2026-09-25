@@ -32,8 +32,8 @@ spec:
           cpu: 600m
           memory: 512Mi
         requests:
-          cpu: 600m
-          memory: 512Mi
+          cpu: 300m
+          memory: 256Mi
     monitoring:
       type: pmm
       parameters:
@@ -41,3 +41,7 @@ spec:
     proxy:
       type: pgbouncer
       replicas: 1
+      resources:
+        limits:
+          cpu: 200m
+          memory: 128Mi

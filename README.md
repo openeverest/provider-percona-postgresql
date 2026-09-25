@@ -63,7 +63,7 @@ provider itself is covered under [Installation](#installation).
 | Horizontal scaling | ✅ | `spec.components.<name>.replicas` |
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.<name>.resources` |
 | Version upgrades | ✅ | of the deployed PostgreSQL version — change `spec.version`; see [Versions](#versions) |
-| Custom configuration | ❌ | not yet exposed through the Instance API |
+| Custom configuration | ✅ | `spec.components.engine.parameters.configuration` — see [Custom PostgreSQL configuration](#custom-postgresql-configuration) |
 | Monitoring | ✅ | PMM, via `spec.components.monitoring` referencing a `MonitoringConfig` |
 | TLS | ⚠️ | the operator provisions certificates; nothing is exposed through the Instance API |
 
@@ -196,8 +196,9 @@ are not a simple `spec.version` bump. Minor upgrades within a major version are 
   (`kubectl get provider provider-percona-postgresql -o yaml`). The API server and the UI
   validate user input against these schemas.
 
-This provider currently exposes no technology-specific parameters beyond the shared
-component fields (replicas, resources, storage).
+This provider currently exposes one technology-specific parameter beyond the shared
+component fields (replicas, resources, storage): `engine.parameters.configuration`,
+covered in [Custom PostgreSQL configuration](#custom-postgresql-configuration).
 
 ## Development
 
@@ -254,6 +255,7 @@ kubectl logs -n everest-system deploy/provider-percona-postgresql -f
 | Symptom | Where to look |
 |---|---|
 | `Instance` stuck in `Creating` | `kubectl describe instance <name>` conditions, then the provider logs |
+| `Instance` in `Phase: Failed` | `kubectl describe instance <name>` Events (look for `ValidationFailed`), then the provider logs |
 | No `Provider` resource in the cluster | Is the chart installed? Check the provider deployment logs |
 | `Instance` ignored entirely | `spec.providerRef.name` must be `provider-percona-postgresql` |
 | `PerconaPGCluster` created but no pods | Inspect the `PerconaPGCluster` status — the failure is upstream in the operator |
