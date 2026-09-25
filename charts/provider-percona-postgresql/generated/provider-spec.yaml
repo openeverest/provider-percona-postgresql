@@ -165,7 +165,7 @@ spec:
                 cpu:
                   fieldParams:
                     defaultValue: 200m
-                    label: CPU Limit
+                    label: CPU Request
                   path: spec.components.proxy.resources.requests.cpu
                   placeholder: 200m
                   uiType: text
@@ -176,7 +176,7 @@ spec:
                 memory:
                   fieldParams:
                     defaultValue: 128Mi
-                    label: Memory Limit
+                    label: Memory Request
                   path: spec.components.proxy.resources.requests.memory
                   placeholder: 128Mi
                   uiType: text

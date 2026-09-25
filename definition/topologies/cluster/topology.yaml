@@ -177,7 +177,7 @@ ui:
                   uiType: text
                   path: spec.components.proxy.resources.requests.cpu
                   fieldParams:
-                    label: CPU Limit
+                    label: CPU Request
                     defaultValue: 200m
                   validation:
                     regex:
@@ -188,7 +188,7 @@ ui:
                   placeholder: 128Mi
                   path: spec.components.proxy.resources.requests.memory
                   fieldParams:
-                    label: Memory Limit
+                    label: Memory Request
                     defaultValue: 128Mi
                   validation:
                     regex:
