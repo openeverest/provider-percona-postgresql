@@ -48,6 +48,7 @@ never manages pods directly — all lifecycle work is delegated to the operator.
 
 | provider-percona-postgresql | OpenEverest | Percona Operator for PostgreSQL | Kubernetes |
 |---|---|---|---|
+| `0.3.x` | `2.0.0-dev.3` | `3.0.x` | `1.30` – `1.34` |
 | `0.2.x` | `2.0.0-dev.3` | `3.0.x` | `1.30` – `1.34` |
 | `0.1.x` | `2.0.0-dev.2` | `3.0.x` | `1.30` – `1.34` |
 
@@ -63,7 +64,7 @@ provider itself is covered under [Installation](#installation).
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.<name>.resources` |
 | Version upgrades | ✅ | of the deployed PostgreSQL version — change `spec.version`; see [Versions](#versions) |
 | Custom configuration | ✅ | `spec.components.engine.parameters.configuration` — see [Custom PostgreSQL configuration](#custom-postgresql-configuration) |
-| Monitoring | ❌ | planned |
+| Monitoring | ✅ | PMM, via `spec.components.monitoring` referencing a `MonitoringConfig` |
 | TLS | ⚠️ | the operator provisions certificates; nothing is exposed through the Instance API |
 
 Stateful workloads additionally report:
@@ -72,10 +73,10 @@ Stateful workloads additionally report:
 |---|---|---|
 | Persistent storage | ✅ | `spec.components.engine.storage` |
 | Storage expansion | ✅ | when the StorageClass allows volume expansion |
-| Backups (on demand) | ❌ | planned; pgBackRest images are already catalogued |
-| Backups (scheduled) | ❌ | planned |
-| Point-in-time recovery | ❌ | planned |
-| Restore | ❌ | planned |
+| Backups (on demand) | ✅ | via the `Backup` API |
+| Backups (scheduled) | ✅ | via `spec.backup.schedules` on the `Instance` |
+| Point-in-time recovery | ✅ | via the `Restore` API (`dataSource.pointInTime`) |
+| Restore | ✅ | via the `Restore` API (`dataSource.backup` or `dataSource.pointInTime`) |
 
 ## Installation
 
