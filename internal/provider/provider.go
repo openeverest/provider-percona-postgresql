@@ -199,6 +199,10 @@ func (p *Provider) Validate(c *controller.Context) error {
 		if engine.Image == "" && engineVersion == "" && controller.GetDefaultImage(providerSpec, componentTypePostgreSQL) == "" {
 			errs = append(errs, "cannot resolve postgres image: set engine.image or engine.version, or configure a default postgresql image in provider versions catalog")
 		}
+
+		if err := validateEngineConfiguration(engine); err != nil {
+			errs = append(errs, err.Error())
+		}
 	}
 
 	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]
@@ -369,6 +373,10 @@ func (p *Provider) Sync(c *controller.Context) error {
 		}
 	}
 	applyServiceExpose(cluster, engine, proxy)
+
+	if err := applyEngineConfiguration(c, cluster); err != nil {
+		return err
+	}
 
 	if err := applyMonitoringSettings(c, cluster, providerSpec); err != nil {
 		return err

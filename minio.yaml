@@ -27,16 +27,19 @@ metadata:
 spec:
   containers:
   - name: minio
-    image: quay.io/minio/minio:latest
-    command:
-    - /bin/bash
-    - -c
-    args: 
-    - minio server /data --console-address :9090
+    # quay.io/minio/minio and docker.io/minio/minio are no longer publicly pullable.
+    image: cgr.dev/chainguard/minio:latest
+    args:
+    - server
+    - /data
+    - --certs-dir
+    - /tmp/.minio/certs
+    - --console-address
+    - :9090
     volumeMounts:
     - mountPath: /data
       name: minio-data-vol
-    - mountPath: /root/.minio/certs
+    - mountPath: /tmp/.minio/certs
       name: minio-cert
   initContainers:
   - name: init-minio
@@ -45,7 +48,7 @@ spec:
     - /bin/sh
     - -c
     args:
-    - mkdir -p /data/bucket-1 /data/bucket-2 /data/bucket-3 /data/bucket-4 /data/bucket-5 /data/bucket-6
+    - mkdir -p /data/bucket-1 /data/bucket-2 /data/bucket-3 /data/bucket-4 /data/bucket-5 /data/bucket-6 && chown -R 65532:65532 /data
     volumeMounts:
     - mountPath: /data
       name: minio-data-vol

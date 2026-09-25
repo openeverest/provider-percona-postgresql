@@ -1,0 +1,28 @@
+# Example: custom PostgreSQL configuration overrides.
+#
+# spec.components.engine.parameters.configuration accepts a YAML
+# document of PostgreSQL GUC parameter key/value pairs.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: my-database-custom-config
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  components:
+    engine:
+      type: postgresql
+      replicas: 3
+      storage:
+        size: 10Gi
+      parameters:
+        configuration: |
+          max_connections: "500"
+          shared_buffers: 1GB
+          work_mem: 32MB
+          wal_level: logical
+          log_min_duration_statement: 200
+    proxy:
+      type: pgbouncer
+      replicas: 2
+
