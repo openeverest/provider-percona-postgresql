@@ -173,7 +173,7 @@ ui:
               groupType: line
               components:
                 cpu:
-                  placeholder: 600m
+                  placeholder: 200m
                   uiType: text
                   path: spec.components.proxy.resources.requests.cpu
                   fieldParams:
@@ -185,7 +185,7 @@ ui:
                       message: "Invalid CPU value. Use a whole or decimal number of cores (e.g. 1, 0.5, 1.5) or millicpu with an m suffix (e.g. 200m, 1500m)."
                 memory:
                   uiType: text
-                  placeholder: 1Gi
+                  placeholder: 128Mi
                   path: spec.components.proxy.resources.requests.memory
                   fieldParams:
                     label: Memory Limit
