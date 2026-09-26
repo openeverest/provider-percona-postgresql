@@ -11,7 +11,7 @@ spec:
       name: percona-backup-postgresql
     storages:
       - storageRef:
-          name: minio-storage
+          name: seaweedfs-storage
         schedules:
           - name: full
             enabled: true
@@ -57,7 +57,7 @@ spec:
         - name: repo1
           s3:
             bucket: everest-operator
-            endpoint: https://minio.minio.svc
+            endpoint: https://seaweedfs.seaweedfs.svc
             region: us-east-1
           schedules:
             full: 0 2 * * *
