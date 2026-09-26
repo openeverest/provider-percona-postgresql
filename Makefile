@@ -185,8 +185,8 @@ test-integration-backup-datasource: ## Run backup datasource integration tests.
 test-integration-env-up: openeverest-checkout ## Bootstrap the local environment for integration tests.
 	$(MAKE) k3d-cluster-up
 	$(MAKE) install-crds
-	kubectl apply -f ./minio.yaml
-	kubectl wait -n minio --for=condition=Ready pod/minio --timeout=180s
+	kubectl apply -f ./dev/resources/seaweedfs.yaml
+	kubectl wait -n seaweedfs --for=condition=Available deploy/seaweedfs --timeout=180s
 	$(MAKE) docker-build
 	$(MAKE) load-image
 	$(MAKE) -C $(OPENEVEREST_DIR) build-controller

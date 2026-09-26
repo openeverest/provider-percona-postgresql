@@ -4,7 +4,7 @@ metadata:
   name: backup-restore
 spec:
   description: |
-    Restore a Backup onto the same Instance: use cluster Minio, deploy PMM,
+    Restore a Backup onto the same Instance: use cluster SeaweedFS, deploy PMM,
     create an Instance with backups enabled, write data and take a Backup,
     mutate the data, restore that Backup in place, and verify the original
     seeded row is back.
@@ -25,21 +25,17 @@ spec:
         - assert:
             file: 00-assert.yaml
 
-    - name: deploy-minio
+    - name: wait-seaweedfs
       try:
         - script:
             content: |
-              # Minio is installed by make test-integration-env-up (./minio.yaml).
-              # Do not apply testdata/minio: that PVC is 1Gi and the pod spec differs,
-              # so kubectl apply fails on an already-running env.
-              kubectl wait pod/minio --for=condition=Ready -n minio --timeout=120s
-              # env-up only creates bucket-1..6; BackupStorage uses everest-operator.
-              kubectl exec -n minio minio -c minio -- mkdir -p /data/everest-operator
+              # SeaweedFS (dev/resources/seaweedfs.yaml) is deployed before the suite runs.
+              kubectl wait deploy/seaweedfs --for=condition=Available -n seaweedfs --timeout=120s
       catch:
         - script:
-            content: kubectl get pods -n minio -o yaml
+            content: kubectl get pods -n seaweedfs -o yaml
         - script:
-            content: kubectl logs -n minio minio -c minio --tail=50
+            content: kubectl logs -n seaweedfs deploy/seaweedfs --tail=50
 
     - name: deploy-pmm
       try:
