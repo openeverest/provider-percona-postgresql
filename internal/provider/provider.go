@@ -417,24 +417,16 @@ func (p *Provider) Sync(c *controller.Context) error {
 		existing := &pgv2.PerconaPGCluster{}
 		if getErr := c.Get(existing, c.Name()); getErr == nil {
 			cluster.Spec.Backups = existing.Spec.Backups
+			// The operator's backup/restore triggers must stay operator-owned.
+			cluster.Spec.Backups.PGBackRest.Manual = nil
+			cluster.Spec.Backups.PGBackRest.Restore = nil
+			// Dropping it from the apply would delete it and reshuffle repo slots.
+			if slots := loadRepoSlotMap(existing); slots != nil {
+				saveRepoSlotMap(cluster, slots)
+			}
 		}
 		// If the cluster doesn't exist yet, defaultSpec() already has
 		// backups disabled which is safe.
-	}
-
-	// Preserve backup-related fields set by the PG operator (manual backup
-	// triggers and annotations). Without this the provider would overwrite
-	// them on every reconciliation, preventing on-demand backups from ever
-	// starting.
-	if err := preserveBackupTrigger(c, cluster); err != nil {
-		return err
-	}
-
-	// Preserve the DataSource field set by the PG restore operator. Without
-	// this the provider would overwrite it on every reconciliation, preventing
-	// restores from ever progressing past "Starting".
-	if err := preserveRestoreDataSource(c, cluster); err != nil {
-		return err
 	}
 
 	// Skip applying the cluster spec while a restore is actively running.
@@ -602,88 +594,6 @@ func isPVCResizing(cluster *pgv2.PerconaPGCluster) (bool, error) {
 	}
 
 	return false, nil
-}
-
-// Backup-related annotations set by the Percona PG operator's backup
-// controller. We must preserve these during Sync so that on-demand backups
-// triggered via PerconaPGBackup are not cancelled by the provider
-// overwriting the cluster spec.
-var backupAnnotationKeys = []string{
-	"pgv2.percona.com/pgbackrest-backup",                  // AnnotationPGBackrestBackup
-	"pgv2.percona.com/backup-in-progress",                 // AnnotationBackupInProgress
-	"postgres-operator.crunchydata.com/pgbackrest-backup", // upstream PGBackRestBackup
-}
-
-// preserveBackupTrigger reads the existing PerconaPGCluster and copies
-// backup-related annotations and the Manual backup trigger into the
-// cluster object that is about to be applied. This prevents the provider
-// from overwriting the PG operator's backup trigger on every Sync.
-func preserveBackupTrigger(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
-	existing := &pgv2.PerconaPGCluster{}
-	if err := c.Get(existing, c.Name()); err != nil {
-		// If cluster doesn't exist yet, nothing to preserve.
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("get existing PerconaPGCluster for backup trigger: %w", err)
-	}
-
-	// Preserve backup annotations.
-	for _, key := range backupAnnotationKeys {
-		if val, ok := existing.Annotations[key]; ok {
-			if cluster.Annotations == nil {
-				cluster.Annotations = make(map[string]string)
-			}
-			cluster.Annotations[key] = val
-		}
-	}
-
-	// Preserve the Manual backup trigger if one is set.
-	if existing.Spec.Backups.PGBackRest.Manual != nil {
-		cluster.Spec.Backups.PGBackRest.Manual = existing.Spec.Backups.PGBackRest.Manual
-	}
-
-	return nil
-}
-
-// restoreAnnotationKey is the annotation set by the Percona PG restore
-// controller on the PerconaPGCluster to signal an in-place pgBackRest restore.
-const restoreAnnotationKey = "postgres-operator.crunchydata.com/pgbackrest-restore"
-
-// preserveRestoreDataSource reads the existing PerconaPGCluster and copies
-// restore-related fields into the cluster object that is about to be applied.
-// The Percona PG restore operator sets spec.backups.pgBackRest.restore and
-// the pgbackrest-restore annotation to trigger an in-place restore; without
-// preserving these the provider would wipe them on every Sync, leaving the
-// restore stuck in "Starting".
-func preserveRestoreDataSource(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
-	existing := &pgv2.PerconaPGCluster{}
-	if err := c.Get(existing, c.Name()); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("get existing PerconaPGCluster for restore state: %w", err)
-	}
-
-	// Preserve the DataSource field (used for bootstrap restores).
-	if existing.Spec.DataSource != nil {
-		cluster.Spec.DataSource = existing.Spec.DataSource
-	}
-
-	// Preserve the pgBackRest Restore field (used for in-place restores).
-	if existing.Spec.Backups.PGBackRest.Restore != nil {
-		cluster.Spec.Backups.PGBackRest.Restore = existing.Spec.Backups.PGBackRest.Restore
-	}
-
-	// Preserve the restore annotation.
-	if val, ok := existing.Annotations[restoreAnnotationKey]; ok {
-		if cluster.Annotations == nil {
-			cluster.Annotations = make(map[string]string)
-		}
-		cluster.Annotations[restoreAnnotationKey] = val
-	}
-
-	return nil
 }
 
 func defaultRequestsToLimits(res *corev1.ResourceRequirements) {
