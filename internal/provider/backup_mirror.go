@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
@@ -317,7 +319,9 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 			// Apply retention settings from each schedule to the pgBackRest
 			// global config. pgBackRest supports per-repo retention via keys
 			// like "repo1-retention-full", "repo1-retention-diff".
-			applyRetentionConfig(globalConfig, repoName, storage.Schedules)
+			if err := applyRetentionConfig(globalConfig, repoName, storage.Schedules); err != nil {
+				return &controller.BackupConfigError{Reason: "RetentionTypeUnsupported", Message: err.Error()}
+			}
 		}
 
 		repos = append(repos, repo)
@@ -604,40 +608,73 @@ func buildPGBackRestSchedules(schedules []corev1alpha1.InstanceBackupSchedule) *
 }
 
 // applyRetentionConfig sets pgBackRest retention global config keys based on
-// the RetentionCopies field of each schedule. pgBackRest supports per-repo
+// the Retention field of each schedule. pgBackRest supports per-repo
 // retention via global config keys:
 //
-//	repo<N>-retention-full      = number of full backups to retain
-//	repo<N>-retention-full-type = "count" (retain N most recent full backups)
-//	repo<N>-retention-diff      = number of differential backups to retain
+//	repo<N>-retention-full      = full backups (count) or days (time) to retain
+//	repo<N>-retention-full-type = "count" or "time"
+//	repo<N>-retention-diff      = number of differential backups to retain (count only)
 //
-// When RetentionCopies is 0 (unset), no retention key is emitted and pgBackRest
+// When Retention is unset, no retention key is emitted and pgBackRest
 // keeps all backups (its default).
-func applyRetentionConfig(globalConfig map[string]string, repoName string, schedules []corev1alpha1.InstanceBackupSchedule) {
+func applyRetentionConfig(globalConfig map[string]string, repoName string, schedules []corev1alpha1.InstanceBackupSchedule) error {
 	for _, schedule := range schedules {
-		if !schedule.Enabled || schedule.RetentionCopies <= 0 {
+		if !schedule.Enabled || schedule.Retention == nil {
 			continue
 		}
-		copies := fmt.Sprintf("%d", schedule.RetentionCopies)
+		value, retentionType, err := pgBackRestRetention(schedule.Retention)
+		if err != nil {
+			return fmt.Errorf("schedule %q: %w", schedule.Name, err)
+		}
 		switch strings.ToLower(schedule.Name) {
 		case "full", "":
-			globalConfig[repoName+"-retention-full"] = copies
-			globalConfig[repoName+"-retention-full-type"] = "count"
+			globalConfig[repoName+"-retention-full"] = value
+			globalConfig[repoName+"-retention-full-type"] = retentionType
 		case "diff":
-			globalConfig[repoName+"-retention-diff"] = copies
+			if retentionType != "count" {
+				return fmt.Errorf("schedule %q: pgBackRest only supports count retention for differential backups", schedule.Name)
+			}
+			globalConfig[repoName+"-retention-diff"] = value
 		case "incr":
 			// pgBackRest does not have a separate retention key for
 			// incremental backups — incremental retention is tied to the
 			// full backup retention. Setting full retention here ensures
 			// that old incremental chains are cleaned up when the parent
 			// full backup expires.
-			globalConfig[repoName+"-retention-full"] = copies
-			globalConfig[repoName+"-retention-full-type"] = "count"
+			globalConfig[repoName+"-retention-full"] = value
+			globalConfig[repoName+"-retention-full-type"] = retentionType
 		default:
 			// Unrecognized schedule names default to full backup type.
-			globalConfig[repoName+"-retention-full"] = copies
-			globalConfig[repoName+"-retention-full-type"] = "count"
+			globalConfig[repoName+"-retention-full"] = value
+			globalConfig[repoName+"-retention-full-type"] = retentionType
 		}
+	}
+	return nil
+}
+
+var retentionDurationPattern = regexp.MustCompile(`^([1-9][0-9]*)([dwm])$`)
+
+// daysPerRetentionUnit counts a month as 31 days so a time window is never
+// shorter than requested; pgBackRest only expresses time retention in days.
+var daysPerRetentionUnit = map[string]int{"d": 1, "w": 7, "m": 31}
+
+// pgBackRestRetention returns the repo-retention value and type for r.
+func pgBackRestRetention(r *corev1alpha1.BackupScheduleRetention) (value, retentionType string, err error) {
+	switch r.Type {
+	case corev1alpha1.BackupScheduleRetentionTypeCount:
+		return strconv.Itoa(int(*r.Count)), "count", nil
+	case corev1alpha1.BackupScheduleRetentionTypeTime:
+		m := retentionDurationPattern.FindStringSubmatch(r.Duration)
+		if m == nil {
+			return "", "", fmt.Errorf("invalid retention duration %q", r.Duration)
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			return "", "", fmt.Errorf("invalid retention duration %q: %w", r.Duration, err)
+		}
+		return strconv.Itoa(n * daysPerRetentionUnit[m[2]]), "time", nil
+	default:
+		return "", "", fmt.Errorf("unsupported retention type %q", r.Type)
 	}
 }
 
