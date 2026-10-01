@@ -27,8 +27,19 @@ func spreadPolicy(constraints ...corev1.TopologySpreadConstraint) *apicommon.Sch
 	return &apicommon.SchedulingPolicy{TopologySpreadConstraints: &constraints}
 }
 
+var (
+	hostnameDefault = corev1.TopologySpreadConstraint{MaxSkew: 1, TopologyKey: corev1.LabelHostname, WhenUnsatisfiable: corev1.ScheduleAnyway}
+	zoneDefault     = corev1.TopologySpreadConstraint{MaxSkew: 1, TopologyKey: corev1.LabelTopologyZone, WhenUnsatisfiable: corev1.ScheduleAnyway}
+	strictHostname  = corev1.TopologySpreadConstraint{MaxSkew: 1, TopologyKey: corev1.LabelHostname, WhenUnsatisfiable: corev1.DoNotSchedule}
+)
+
 func TestValidateSpreadConstraints(t *testing.T) {
 	t.Parallel()
+
+	widerHostname := hostnameDefault
+	widerHostname.MaxSkew = 2
+	selectedZone := zoneDefault
+	selectedZone.LabelSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": "db"}}
 
 	tests := []struct {
 		name    string
@@ -37,24 +48,27 @@ func TestValidateSpreadConstraints(t *testing.T) {
 	}{
 		{name: "unset leaves the operator default"},
 		{name: "policy without spread constraints", policy: &apicommon.SchedulingPolicy{}},
+		{name: "list states the operator default", policy: spreadPolicy(hostnameDefault, zoneDefault)},
+		{name: "list adds to the operator default", policy: spreadPolicy(zoneDefault, strictHostname, hostnameDefault)},
 		{
 			name:    "empty list cannot turn the operator default off",
 			policy:  spreadPolicy(),
-			wantErr: "empty topologySpreadConstraints list is not supported",
+			wantErr: "must include {topologyKey: kubernetes.io/hostname, whenUnsatisfiable: ScheduleAnyway, maxSkew: 1}",
 		},
 		{
-			name:    "soft hostname spread duplicates the operator's",
-			policy:  spreadPolicy(corev1.TopologySpreadConstraint{MaxSkew: 1, TopologyKey: corev1.LabelHostname, WhenUnsatisfiable: corev1.ScheduleAnyway}),
-			wantErr: "kubernetes.io/hostname with ScheduleAnyway is already set by the operator",
+			name:    "list must state the zone default too",
+			policy:  spreadPolicy(hostnameDefault, strictHostname),
+			wantErr: "must include {topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, maxSkew: 1}",
 		},
 		{
-			name:    "soft zone spread duplicates the operator's",
-			policy:  spreadPolicy(corev1.TopologySpreadConstraint{MaxSkew: 1, TopologyKey: corev1.LabelTopologyZone, WhenUnsatisfiable: corev1.ScheduleAnyway}),
-			wantErr: "topology.kubernetes.io/zone with ScheduleAnyway is already set by the operator",
+			name:    "operator default cannot be widened",
+			policy:  spreadPolicy(widerHostname, zoneDefault),
+			wantErr: "kubernetes.io/hostname with ScheduleAnyway is fixed by the operator",
 		},
 		{
-			name:   "strict hostname spread adds to the operator's",
-			policy: spreadPolicy(corev1.TopologySpreadConstraint{MaxSkew: 1, TopologyKey: corev1.LabelHostname, WhenUnsatisfiable: corev1.DoNotSchedule}),
+			name:    "operator default cannot be narrowed to other pods",
+			policy:  spreadPolicy(hostnameDefault, selectedZone),
+			wantErr: "topology.kubernetes.io/zone with ScheduleAnyway is fixed by the operator",
 		},
 	}
 
@@ -75,13 +89,15 @@ func TestInstanceSpreadConstraints(t *testing.T) {
 	t.Parallel()
 
 	assert.Nil(t, instanceSpreadConstraints(nil, "db", "instance1"), "unset leaves spreading to the operator")
+	assert.Empty(t, instanceSpreadConstraints(spreadPolicy(hostnameDefault, zoneDefault), "db", "instance1"),
+		"the operator adds its own default back")
 
-	strict := corev1.TopologySpreadConstraint{MaxSkew: 1, TopologyKey: corev1.LabelHostname, WhenUnsatisfiable: corev1.DoNotSchedule}
-	got := instanceSpreadConstraints(spreadPolicy(strict), "db", "instance1")
+	got := instanceSpreadConstraints(spreadPolicy(hostnameDefault, strictHostname, zoneDefault), "db", "instance1")
 
-	strict.LabelSelector = &metav1.LabelSelector{MatchLabels: map[string]string{
+	want := strictHostname
+	want.LabelSelector = &metav1.LabelSelector{MatchLabels: map[string]string{
 		labelCluster:     "db",
 		labelInstanceSet: "instance1",
 	}}
-	assert.Equal(t, []corev1.TopologySpreadConstraint{strict}, got)
+	assert.Equal(t, []corev1.TopologySpreadConstraint{want}, got)
 }

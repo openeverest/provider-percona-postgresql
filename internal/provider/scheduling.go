@@ -15,12 +15,13 @@
 package provider
 
 import (
-	"errors"
 	"fmt"
+	"slices"
 
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 )
 
 // Labels the operator puts on instance pods; its naming package is internal.
@@ -29,34 +30,62 @@ const (
 	labelInstanceSet = "postgres-operator.crunchydata.com/instance-set"
 )
 
-// validateSpreadConstraints rejects spread constraints the operator cannot
-// honour. It always adds soft spread across nodes and zones to instance pods,
-// with no way to turn it off, and Kubernetes rejects two constraints with the
-// same topologyKey and whenUnsatisfiable.
+// operatorSpreadKeys are the topology keys of the soft spread the operator
+// always adds to instance pods, with no way to turn it off.
+var operatorSpreadKeys = []string{corev1.LabelHostname, corev1.LabelTopologyZone}
+
+func operatorSpread(topologyKey string) corev1.TopologySpreadConstraint {
+	return corev1.TopologySpreadConstraint{
+		MaxSkew:           1,
+		TopologyKey:       topologyKey,
+		WhenUnsatisfiable: corev1.ScheduleAnyway,
+	}
+}
+
+func collidesWithOperatorSpread(c corev1.TopologySpreadConstraint) bool {
+	return c.WhenUnsatisfiable == corev1.ScheduleAnyway && slices.Contains(operatorSpreadKeys, c.TopologyKey)
+}
+
+// validateSpreadConstraints makes a user list state every constraint that
+// applies: it must include the operator's soft spread across nodes and zones
+// as is, since Kubernetes rejects two constraints with the same topologyKey and
+// whenUnsatisfiable.
 func validateSpreadConstraints(policy *apicommon.SchedulingPolicy) error {
 	if policy == nil || policy.TopologySpreadConstraints == nil {
 		return nil
 	}
-	constraints := *policy.TopologySpreadConstraints
-	if len(constraints) == 0 {
-		return errors.New("an empty topologySpreadConstraints list is not supported: the operator always spreads instances across nodes and zones")
+	found := map[string]bool{}
+	for _, c := range *policy.TopologySpreadConstraints {
+		if !collidesWithOperatorSpread(c) {
+			continue
+		}
+		if !equality.Semantic.DeepEqual(c, operatorSpread(c.TopologyKey)) {
+			return fmt.Errorf("topologySpreadConstraints: %s with ScheduleAnyway is fixed by the operator as {maxSkew: 1} without a selector", c.TopologyKey)
+		}
+		found[c.TopologyKey] = true
 	}
-	for _, c := range constraints {
-		if c.WhenUnsatisfiable == corev1.ScheduleAnyway &&
-			(c.TopologyKey == corev1.LabelHostname || c.TopologyKey == corev1.LabelTopologyZone) {
-			return fmt.Errorf("topologySpreadConstraints: %s with ScheduleAnyway is already set by the operator", c.TopologyKey)
+	for _, key := range operatorSpreadKeys {
+		if !found[key] {
+			return fmt.Errorf("topologySpreadConstraints must include {topologyKey: %s, whenUnsatisfiable: ScheduleAnyway, maxSkew: 1}: the operator always applies it", key)
 		}
 	}
 	return nil
 }
 
-// instanceSpreadConstraints returns the user's spread constraints for the
-// instance pods, or nil to leave spreading to the operator's own default.
+// instanceSpreadConstraints returns the spread constraints to hand to the
+// operator: the user's list without the two it adds itself, or nil to leave
+// spreading to its default.
 func instanceSpreadConstraints(policy *apicommon.SchedulingPolicy, clusterName, instanceSet string) []corev1.TopologySpreadConstraint {
 	if policy == nil || policy.TopologySpreadConstraints == nil {
 		return nil
 	}
-	return controller.TopologySpreadConstraints(policy, map[string]string{
+	var own []corev1.TopologySpreadConstraint
+	for _, c := range *policy.TopologySpreadConstraints {
+		if !collidesWithOperatorSpread(c) {
+			own = append(own, c)
+		}
+	}
+	return controller.TopologySpreadConstraints(&apicommon.SchedulingPolicy{TopologySpreadConstraints: &own}, map[string]string{
 		labelCluster:     clusterName,
 		labelInstanceSet: instanceSet,
 	})
