@@ -203,6 +203,9 @@ func (p *Provider) Validate(c *controller.Context) error {
 		if err := validateEngineConfiguration(engine); err != nil {
 			errs = append(errs, err.Error())
 		}
+		if err := validateSpreadConstraints(engine.SchedulingPolicy); err != nil {
+			errs = append(errs, fmt.Sprintf("%q component: %s", common.ComponentEngine, err))
+		}
 	}
 
 	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]
@@ -312,6 +315,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 	if engine.SchedulingPolicy != nil && engine.SchedulingPolicy.Affinity != nil {
 		cluster.Spec.InstanceSets[0].Affinity = engine.SchedulingPolicy.Affinity
 	}
+	cluster.Spec.InstanceSets[0].TopologySpreadConstraints = instanceSpreadConstraints(engine.SchedulingPolicy, c.Name(), cluster.Spec.InstanceSets[0].Name)
 	engineVersion := engine.Version
 	if engineVersion == "" {
 		engineVersion = bundleComponents[common.ComponentEngine]
