@@ -1,0 +1,103 @@
+// Copyright (C) 2026 The OpenEverest Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package provider
+
+import (
+	"testing"
+
+	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
+	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+func spreadPolicy(constraints ...corev1.TopologySpreadConstraint) *apicommon.SchedulingPolicy {
+	return &apicommon.SchedulingPolicy{TopologySpreadConstraints: &constraints}
+}
+
+var (
+	hostnameDefault = corev1.TopologySpreadConstraint{MaxSkew: 1, TopologyKey: corev1.LabelHostname, WhenUnsatisfiable: corev1.ScheduleAnyway}
+	zoneDefault     = corev1.TopologySpreadConstraint{MaxSkew: 1, TopologyKey: corev1.LabelTopologyZone, WhenUnsatisfiable: corev1.ScheduleAnyway}
+	strictHostname  = corev1.TopologySpreadConstraint{MaxSkew: 1, TopologyKey: corev1.LabelHostname, WhenUnsatisfiable: corev1.DoNotSchedule}
+)
+
+func TestValidateSpreadConstraints(t *testing.T) {
+	t.Parallel()
+
+	widerHostname := hostnameDefault
+	widerHostname.MaxSkew = 2
+	selectedZone := zoneDefault
+	selectedZone.LabelSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": "db"}}
+
+	tests := []struct {
+		name    string
+		policy  *apicommon.SchedulingPolicy
+		wantErr string
+	}{
+		{name: "unset leaves the operator default"},
+		{name: "policy without spread constraints", policy: &apicommon.SchedulingPolicy{}},
+		{name: "list states the operator default", policy: spreadPolicy(hostnameDefault, zoneDefault)},
+		{name: "list adds to the operator default", policy: spreadPolicy(zoneDefault, strictHostname, hostnameDefault)},
+		{
+			name:    "empty list cannot turn the operator default off",
+			policy:  spreadPolicy(),
+			wantErr: "must include {topologyKey: kubernetes.io/hostname, whenUnsatisfiable: ScheduleAnyway, maxSkew: 1}",
+		},
+		{
+			name:    "list must state the zone default too",
+			policy:  spreadPolicy(hostnameDefault, strictHostname),
+			wantErr: "must include {topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, maxSkew: 1}",
+		},
+		{
+			name:    "operator default cannot be widened",
+			policy:  spreadPolicy(widerHostname, zoneDefault),
+			wantErr: "kubernetes.io/hostname with ScheduleAnyway is fixed by the operator",
+		},
+		{
+			name:    "operator default cannot be narrowed to other pods",
+			policy:  spreadPolicy(hostnameDefault, selectedZone),
+			wantErr: "topology.kubernetes.io/zone with ScheduleAnyway is fixed by the operator",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateSpreadConstraints(tt.policy)
+			if tt.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestInstanceSpreadConstraints(t *testing.T) {
+	t.Parallel()
+
+	assert.Nil(t, instanceSpreadConstraints(nil, "db", "instance1"), "unset leaves spreading to the operator")
+	assert.Empty(t, instanceSpreadConstraints(spreadPolicy(hostnameDefault, zoneDefault), "db", "instance1"),
+		"the operator adds its own default back")
+
+	got := instanceSpreadConstraints(spreadPolicy(hostnameDefault, strictHostname, zoneDefault), "db", "instance1")
+
+	want := strictHostname
+	want.LabelSelector = &metav1.LabelSelector{MatchLabels: map[string]string{
+		labelCluster:     "db",
+		labelInstanceSet: "instance1",
+	}}
+	assert.Equal(t, []corev1.TopologySpreadConstraint{want}, got)
+}
