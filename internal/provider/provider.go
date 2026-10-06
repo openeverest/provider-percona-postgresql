@@ -381,6 +381,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 			return fmt.Errorf("cannot resolve default pgbouncer image from versions catalog")
 		}
 	}
+	labelPods(c, cluster)
 	applyServiceExpose(cluster, engine, proxy)
 
 	if err := applyEngineConfiguration(c, cluster); err != nil {

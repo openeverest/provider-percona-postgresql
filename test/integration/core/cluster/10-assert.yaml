@@ -42,7 +42,17 @@ spec:
         resources:
           requests:
             storage: 25Gi
+      metadata:
+        labels:
+          core.openeverest.io/component: engine
+          core.openeverest.io/instance: test-pg-cluster
+          core.openeverest.io/provider: provider-percona-postgresql
   proxy:
     pgBouncer:
       replicas: 1
+      metadata:
+        labels:
+          core.openeverest.io/component: proxy
+          core.openeverest.io/instance: test-pg-cluster
+          core.openeverest.io/provider: provider-percona-postgresql
 
