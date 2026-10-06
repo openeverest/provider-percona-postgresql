@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -563,6 +564,17 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		host = string(v)
 	}
 
+	// The secret only ever carries the in-cluster Service name. When PGBouncer
+	// is a LoadBalancer the operator publishes the external address in
+	// status.host, which stays empty until the load balancer is provisioned.
+	if pgBouncerLoadBalancerExposed(cluster) {
+		if cluster.Status.Host == "" {
+			return controller.Provisioning("waiting for the pgbouncer load balancer address"), nil
+		}
+		host = cluster.Status.Host
+		uri = replaceURIHost(uri, host)
+	}
+
 	return controller.ReadyWithConnectionDetails(controller.ConnectionDetails{
 		Type:     "postgresql",
 		Provider: common.ProviderName,
@@ -651,6 +663,34 @@ func parseMajorVersion(version string) (int, bool) {
 	}
 
 	return major, true
+}
+
+// pgBouncerLoadBalancerExposed reports whether the operator publishes a load
+// balancer address for PGBouncer in status.host.
+func pgBouncerLoadBalancerExposed(cluster *pgv2.PerconaPGCluster) bool {
+	proxy := cluster.Spec.Proxy
+	if proxy == nil || proxy.PGBouncer == nil || proxy.PGBouncer.ServiceExpose == nil {
+		return false
+	}
+	return proxy.PGBouncer.ServiceExpose.Type == string(corev1.ServiceTypeLoadBalancer)
+}
+
+// replaceURIHost swaps the host of a connection URI and keeps its port,
+// credentials, path and query.
+func replaceURIHost(rawURI, host string) string {
+	if rawURI == "" {
+		return rawURI
+	}
+	parsed, err := url.Parse(rawURI)
+	if err != nil {
+		return rawURI
+	}
+	if port := parsed.Port(); port != "" {
+		parsed.Host = net.JoinHostPort(host, port)
+	} else {
+		parsed.Host = host
+	}
+	return parsed.String()
 }
 
 // ensureSSLMode appends sslmode=require to the URI query parameters if no
