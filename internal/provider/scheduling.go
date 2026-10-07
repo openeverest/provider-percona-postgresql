@@ -20,6 +20,9 @@ import (
 
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
+	"github.com/openeverest/provider-percona-postgresql/internal/common"
+	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
+	crunchyv1beta1 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/upstream.pgv2.percona.com/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 )
@@ -89,4 +92,14 @@ func instanceSpreadConstraints(policy *apicommon.SchedulingPolicy, clusterName, 
 		labelCluster:     clusterName,
 		labelInstanceSet: instanceSet,
 	})
+}
+
+// labelPods labels every component's pods so the runtime reports on them in
+// the Instance status. The operator adds them to the pod templates only, never
+// to the StatefulSet or Deployment selectors.
+func labelPods(c *controller.Context, cluster *pgv2.PerconaPGCluster) {
+	for i := range cluster.Spec.InstanceSets {
+		cluster.Spec.InstanceSets[i].Metadata = &crunchyv1beta1.Metadata{Labels: c.PodLabels(common.ComponentEngine)}
+	}
+	cluster.Spec.Proxy.PGBouncer.Metadata = &crunchyv1beta1.Metadata{Labels: c.PodLabels(common.ComponentProxy)}
 }
