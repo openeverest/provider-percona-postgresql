@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
+	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -100,4 +101,46 @@ func TestInstanceSpreadConstraints(t *testing.T) {
 		labelInstanceSet: "instance1",
 	}}
 	assert.Equal(t, []corev1.TopologySpreadConstraint{want}, got)
+}
+
+func TestApplyProxyScheduling(t *testing.T) {
+	t.Parallel()
+
+	podLabels := map[string]string{"app": "pgbouncer"}
+
+	t.Run("nil bouncer is a no-op", func(t *testing.T) {
+		t.Parallel()
+		assert.NotPanics(t, func() { applyProxyScheduling(nil, nil, podLabels) })
+	})
+
+	t.Run("unset policy leaves affinity unset and clears any stale spread", func(t *testing.T) {
+		t.Parallel()
+		bouncer := &pgv2.PGBouncerSpec{
+			Affinity:                  &corev1.Affinity{},
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{hostnameDefault},
+		}
+		applyProxyScheduling(bouncer, nil, podLabels)
+		assert.NotNil(t, bouncer.Affinity, "affinity is left untouched when no policy is set")
+		assert.Nil(t, bouncer.TopologySpreadConstraints)
+	})
+
+	t.Run("policy affinity replaces the bouncer's affinity", func(t *testing.T) {
+		t.Parallel()
+		affinity := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{}}
+		bouncer := &pgv2.PGBouncerSpec{}
+		applyProxyScheduling(bouncer, &apicommon.SchedulingPolicy{Affinity: affinity}, podLabels)
+		assert.Same(t, affinity, bouncer.Affinity)
+	})
+
+	t.Run("spread constraints default to the pod's own labels, unlike the instance set", func(t *testing.T) {
+		t.Parallel()
+		bouncer := &pgv2.PGBouncerSpec{}
+		applyProxyScheduling(bouncer, spreadPolicy(hostnameDefault, zoneDefault), podLabels)
+
+		want := []corev1.TopologySpreadConstraint{hostnameDefault, zoneDefault}
+		for i := range want {
+			want[i].LabelSelector = &metav1.LabelSelector{MatchLabels: podLabels}
+		}
+		assert.Equal(t, want, bouncer.TopologySpreadConstraints)
+	})
 }

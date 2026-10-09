@@ -363,6 +363,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 		cluster.Spec.Proxy.PGBouncer.Resources = *proxy.Resources
 	}
 	defaultRequestsToLimits(&cluster.Spec.Proxy.PGBouncer.Resources)
+	applyProxyScheduling(cluster.Spec.Proxy.PGBouncer, proxy.SchedulingPolicy, c.PodLabels(common.ComponentProxy))
 	if proxy.Image != "" {
 		cluster.Spec.Proxy.PGBouncer.Image = proxy.Image
 	} else if cluster.Spec.Proxy.PGBouncer.Image == "" {

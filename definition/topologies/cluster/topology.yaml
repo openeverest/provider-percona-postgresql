@@ -231,6 +231,20 @@ ui:
                         regex:
                             pattern: '^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$'
                             message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_connections: "500"'
+                podSchedulingPolicy:
+                  uiType: group
+                  groupType: toggleable
+                  label: "Pod scheduling policy"
+                  description: "Control how database pods are scheduled onto nodes using affinity rules."
+                  components:
+                    policy:
+                      uiType: widget
+                      widgetType: podSchedulingPolicy
+                  componentsOrder:
+                    - policy
+            componentsOrder:
+              - configuration
+              - podSchedulingPolicy
     sectionsOrder:
         - databaseVersion
         - resources

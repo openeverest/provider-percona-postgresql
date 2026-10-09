@@ -19,6 +19,13 @@ spec:
     proxy:
       type: pgbouncer
       replicas: 1
+      schedulingPolicy:
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 50
+                podAffinityTerm:
+                  topologyKey: topology.kubernetes.io/zone
 status:
   phase: Ready
 ---
@@ -35,6 +42,14 @@ spec:
             - weight: 100
               podAffinityTerm:
                 topologyKey: kubernetes.io/hostname
+  proxy:
+    pgBouncer:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 50
+              podAffinityTerm:
+                topologyKey: topology.kubernetes.io/zone
 status:
   postgres:
     size: 5

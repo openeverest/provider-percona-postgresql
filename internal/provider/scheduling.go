@@ -94,6 +94,20 @@ func instanceSpreadConstraints(policy *apicommon.SchedulingPolicy, clusterName, 
 	})
 }
 
+// applyProxyScheduling places the PGBouncer pods. Unlike the postgres
+// instance set, the operator does not force any affinity or topology spread
+// of its own on PGBouncer pods, so the user's policy applies as-is with no
+// need for the collision checks instance scheduling requires.
+func applyProxyScheduling(bouncer *pgv2.PGBouncerSpec, policy *apicommon.SchedulingPolicy, podLabels map[string]string) {
+	if bouncer == nil {
+		return
+	}
+	if policy != nil {
+		bouncer.Affinity = policy.Affinity
+	}
+	bouncer.TopologySpreadConstraints = controller.TopologySpreadConstraints(policy, podLabels)
+}
+
 // labelPods labels every component's pods so the runtime reports on them in
 // the Instance status. The operator adds them to the pod templates only, never
 // to the StatefulSet or Deployment selectors.
