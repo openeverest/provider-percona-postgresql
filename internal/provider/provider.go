@@ -399,7 +399,10 @@ func (p *Provider) Sync(c *controller.Context) error {
 		cluster.Spec.Proxy.PGBouncer.ExposeSuperusers = true
 	}
 	cluster.Spec.Users = []upstreamv1beta1.PostgresUserSpec{
-		{Name: defaultUsername},
+		{
+			Name:      defaultUsername,
+			Databases: []upstreamv1beta1.PostgresIdentifier{"postgres"},
+		},
 	}
 
 	// Automatically remove storages that have no schedules and no Backup CRs
