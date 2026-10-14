@@ -37,6 +37,7 @@ const (
 	// Backup's DeletionPolicy (Delete vs Retain).
 	finalizerDeleteSSL = "percona.com/delete-ssl"
 	finalizerDeletePVC = "percona.com/delete-pvc"
+	defaultUsername    = "postgres"
 )
 
 // Compile-time check that Provider implements the required interface.
@@ -394,10 +395,12 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
-	// We do NOT set spec.users — the Percona PG operator automatically
-	// creates a default user and database named after the cluster. The
-	// default user is not a superuser, which is required for PGBouncer
-	// authentication (pgbouncer.get_auth() excludes superusers).
+	if cluster.Spec.Proxy != nil && cluster.Spec.Proxy.PGBouncer != nil {
+		cluster.Spec.Proxy.PGBouncer.ExposeSuperusers = true
+	}
+	cluster.Spec.Users = []upstreamv1beta1.PostgresUserSpec{
+		{Name: defaultUsername},
+	}
 
 	// Automatically remove storages that have no schedules and no Backup CRs
 	// referencing them. This frees repo slots for reuse.
@@ -538,7 +541,7 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	// properly URL-encoded URIs for both direct and PGBouncer connections.
 	var username, password, uri string
 	userSecret := &corev1.Secret{}
-	secretName := c.Name() + "-pguser-" + c.Name()
+	secretName := c.Name() + "-pguser-" + defaultUsername
 	if err := c.Get(userSecret, secretName); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return controller.Status{}, fmt.Errorf("get user secret %q: %w", secretName, err)
