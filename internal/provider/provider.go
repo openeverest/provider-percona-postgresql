@@ -400,7 +400,8 @@ func (p *Provider) Sync(c *controller.Context) error {
 	}
 	cluster.Spec.Users = []upstreamv1beta1.PostgresUserSpec{
 		{
-			Name:      defaultUsername,
+			Name: defaultUsername,
+			// need to specify it in oder to have secrets generated and pgbouncer-uri populated
 			Databases: []upstreamv1beta1.PostgresIdentifier{"postgres"},
 		},
 	}
