@@ -34,6 +34,8 @@ spec:
     secret: test-pg-cluster-pmm-secret
     customClusterName: test-pg-cluster
     imagePullPolicy: IfNotPresent
+    # Labels that tie the instance's metrics in PMM back to the Instance.
+    postgresParams: (join('', ['--custom-labels=namespace=', $namespace, ',core_openeverest_io_instance=test-pg-cluster']))
 ---
 apiVersion: v1
 kind: Secret

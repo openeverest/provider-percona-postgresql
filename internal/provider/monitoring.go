@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
@@ -80,12 +81,32 @@ func applyMonitoringSettings(c *controller.Context, cluster *pgv2.PerconaPGClust
 		Image:             pmmImage,
 		Secret:            pmmSecretName,
 		CustomClusterName: c.Name(),
+		PostgresParams:    pmmAdminParams(c),
 		ImagePullPolicy:   corev1.PullIfNotPresent,
 	}
 	if monitoringComponent.Resources != nil {
 		cluster.Spec.PMM.Resources = *monitoringComponent.Resources
 	}
 	return nil
+}
+
+// pmmAdminParams returns the pmm-admin flags that label the instance's metrics
+// in PMM, so consumers can scope queries to one instance. Label names follow
+// the Prometheus form of the pod labels (core_openeverest_io_instance), and
+// namespace matches the label on Kubernetes metrics in PMM. The operator runs
+// pmm-admin through a shell; Kubernetes names need no quoting. Only PostgreSQL
+// pods run a PMM client, so no component label is needed.
+func pmmAdminParams(c *controller.Context) string {
+	return "--custom-labels=namespace=" + c.Namespace() +
+		"," + prometheusLabelName(controller.InstanceLabel) + "=" + c.Name()
+}
+
+var invalidPrometheusLabelChars = regexp.MustCompile(`[^a-zA-Z0-9_]`)
+
+// prometheusLabelName converts a Kubernetes label key to a valid Prometheus
+// label name the way Prometheus does for Kubernetes service discovery.
+func prometheusLabelName(key string) string {
+	return invalidPrometheusLabelChars.ReplaceAllString(key, "_")
 }
 
 func monitoringConfigNameFromComponent(component corev1alpha1.ComponentSpec) (string, error) {

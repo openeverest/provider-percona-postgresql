@@ -202,6 +202,9 @@ This provider currently exposes one technology-specific parameter beyond the sha
 component fields (replicas, resources, storage): `engine.parameters.configuration`,
 covered in [Custom PostgreSQL configuration](#custom-postgresql-configuration).
 
+With `monitoring` enabled, the instance's PostgreSQL metrics in PMM carry `namespace` and
+`core_openeverest_io_instance` labels, so they can be queried per instance.
+
 ## Development
 
 Requires Go (see [go.mod](go.mod)), Docker, Helm, kubectl, and a Kubernetes cluster you can
