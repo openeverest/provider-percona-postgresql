@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: seaweedfs-credentials
+type: Opaque
+data:
+  AWS_ACCESS_KEY_ID: c2Vhd2VlZGZzYWRtaW4=     # seaweedfsadmin
+  AWS_SECRET_ACCESS_KEY: c2Vhd2VlZGZzYWRtaW4= # seaweedfsadmin
+---
+apiVersion: backup.openeverest.io/v1alpha1
+kind: BackupStorage
+metadata:
+  name: seaweedfs-storage
+spec:
+  type: s3
+  s3:
+    bucket: everest-operator
+    region: us-east-1
+    endpointURL: https://seaweedfs.seaweedfs.svc
+    forcePathStyle: true
+    credentialsSecretRef:
+      name: seaweedfs-credentials
+    verifyTLS: false
+---
+apiVersion: backup.openeverest.io/v1alpha1
+kind: BackupClass
+metadata:
+  name: percona-backup-postgresql
+spec:
+  displayName: Percona Backup for PostgreSQL
+  executionMode: ProviderManaged
+  supportedProviders:
+    - provider-percona-postgresql
+  providerManaged:
+    supportsPITR: true
+    limits:
+      maxPITREnabledStorages: 1

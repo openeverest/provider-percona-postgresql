@@ -1,0 +1,27 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-clone-backup
+status:
+  phase: Ready
+  (conditions[?type == 'DataSourceReady'] | [0].status): "True"
+---
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Restore
+metadata:
+  name: pg-clone-backup-datasource
+status:
+  state: Succeeded
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: pg-clone-backup
+status:
+  postgres:
+    ready: 1
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-clone-backup-conn

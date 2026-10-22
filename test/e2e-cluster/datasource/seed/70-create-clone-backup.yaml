@@ -1,0 +1,48 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-clone-backup
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  dataSource:
+    type: Backup
+    backup:
+      backupRef:
+        name: pg-src-backup
+  backup:
+    enabled: true
+    classRef:
+      name: percona-backup-postgresql
+    storages:
+      # Must match the storage used by the source Backup so the provider
+      # can read the data; a schedule keeps the provider from pruning it
+      # as unreferenced before the seeding restore completes.
+      - storageRef:
+          name: seaweedfs-storage
+        schedules:
+          - name: full
+            enabled: true
+            cron: "0 3 * * *"
+  topology:
+    type: cluster
+  components:
+    engine:
+      type: postgresql
+      replicas: 1
+      storage:
+        size: 1Gi
+      resources:
+        limits:
+          cpu: 600m
+          memory: 512Mi
+        requests:
+          cpu: 300m
+          memory: 256Mi
+    proxy:
+      type: pgbouncer
+      replicas: 1
+      resources:
+        limits:
+          cpu: 200m
+          memory: 128Mi
