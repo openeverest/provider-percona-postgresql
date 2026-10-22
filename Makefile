@@ -221,6 +221,10 @@ test-e2e-cluster: ## Run E2E cluster tests (requires PG operator).
 test-e2e-cluster-datasource-backup: ## Run backup datasource e2e-cluster test (requires a running PG operator).
 	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/datasource/backup
 
+.PHONY: test-e2e-cluster-datasource-seed
+test-e2e-cluster-datasource-seed: ## Run seed-new-instance datasource e2e-cluster test (requires a running PG operator).
+	. ./test/vars.sh && chainsaw test --config ./test/e2e-cluster/.chainsaw.yaml ./test/e2e-cluster/datasource/seed
+
 .PHONY: load-image
 load-image: ## Import the provider image (IMG) into the k3d cluster.
 	k3d image import ${IMG} -c ${K3D_CLUSTER_NAME}

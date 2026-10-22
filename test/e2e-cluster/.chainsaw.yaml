@@ -7,10 +7,13 @@ spec:
   timeouts:
     apply: 60s
     assert: 60s
-    delete: 60s
+    # GKE namespace deletion has to detach/delete the underlying GCE Persistent
+    # Disks backing the PerconaPGCluster PVCs, which routinely takes longer
+    # than the previous 60s default.
+    delete: 300s
     error: 60s
     exec: 60s
-    cleanup: 60s
+    cleanup: 300s
   cleanup:
     skipDelete: false
   report:

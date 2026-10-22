@@ -1,0 +1,33 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-clone-pitr
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  dataSource:
+    type: PointInTime
+    pointInTime:
+      source:
+        instanceRef:
+          name: pg-src
+        storageRef:
+          name: seaweedfs-storage
+      recoveryTarget: date
+---
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Restore
+metadata:
+  name: pg-clone-pitr-datasource
+spec:
+  instanceRef:
+    name: pg-clone-pitr
+  dataSource:
+    type: PointInTime
+    pointInTime:
+      source:
+        instanceRef:
+          name: pg-src
+        storageRef:
+          name: seaweedfs-storage
+      recoveryTarget: date

@@ -1,0 +1,281 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: seed-new-instance
+spec:
+  description: |
+    Seed brand-new Instances from another Instance's backup data: use cluster
+    SeaweedFS, create a source Instance with backups and PITR enabled. Write
+    data (1), take a Backup and confirm it succeeds, write data (2), capture a
+    recovery-target timestamp, wait a minute, then write data (3). Finally
+    create two new Instances -- one seeded from the Backup CR, one seeded via
+    point-in-time recovery to the captured timestamp -- and verify the
+    Backup-seeded clone only has (1) while the PITR-seeded clone has (1) and
+    (2) but not (3).
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com,backup,perconapgbackups.pgv2.percona.com,restore,perconapgrestores.pgv2.percona.com,backupstorage -o yaml
+    - script:
+        content: kubectl get backupclass -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-percona-postgresql
+        tail: 100
+  steps:
+    - name: provider-operator-installed
+      try:
+        - assert:
+            file: 00-assert.yaml
+
+    - name: wait-seaweedfs
+      try:
+        - script:
+            content: |
+              # SeaweedFS (dev/resources/seaweedfs.yaml) is deployed before the suite runs.
+              kubectl wait deploy/seaweedfs --for=condition=Available -n seaweedfs --timeout=120s
+      catch:
+        - script:
+            content: kubectl get pods -n seaweedfs -o yaml
+        - script:
+            content: kubectl logs -n seaweedfs deploy/seaweedfs --tail=50
+
+    - name: setup-backup
+      try:
+        - apply:
+            file: 20-install.yaml
+        - assert:
+            file: 20-assert.yaml
+
+    - name: create-source-instance
+      try:
+        - apply:
+            file: 30-create-source.yaml
+        - assert:
+            file: 30-assert.yaml
+
+    - name: source-cluster-ready
+      try:
+        - assert:
+            timeout: 360s
+            file: 40-assert.yaml
+
+    - name: create-source-postgresql-client
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              kubectl run -n "${NAMESPACE}" pg-src-client --env="NO_COLOR=1" --image=postgres:17 --restart=Never --command -- sleep 600
+              kubectl wait --for=condition=Ready pod/pg-src-client --timeout=60s -n ${NAMESPACE}
+      catch:
+        - script:
+            content: kubectl get pod/pg-src-client -n $NAMESPACE -o yaml
+
+    - name: seed-data-1
+      try:
+        - script:
+            content: |
+              # (1): written before the Backup below, so both clones must see it.
+              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-src-conn -o jsonpath='{.data.uri}' | base64 --decode)"
+              kubectl exec pg-src-client -n ${NAMESPACE} -- psql "$CONN_URI" -v ON_ERROR_STOP=1 \
+                -c "CREATE TABLE IF NOT EXISTS test(id text primary key);" \
+                -c "INSERT INTO test(id) VALUES ('data-1') ON CONFLICT (id) DO NOTHING;"
+
+    - name: create-backup
+      try:
+        - apply:
+            file: 50-create-backup.yaml
+        - assert:
+            file: 50-assert.yaml
+
+    - name: backup-complete
+      try:
+        - assert:
+            timeout: 360s
+            file: 60-assert.yaml
+
+    - name: add-data-2
+      try:
+        - script:
+            content: |
+              # (2): written after the Backup above, so the Backup-seeded clone
+              # must not see it, while the PITR-seeded clone (recovering to the
+              # timestamp captured in the next step) must.
+              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-src-conn -o jsonpath='{.data.uri}' | base64 --decode)"
+              kubectl exec pg-src-client -n ${NAMESPACE} -- psql "$CONN_URI" -v ON_ERROR_STOP=1 \
+                -c "INSERT INTO test(id) VALUES ('data-2') ON CONFLICT (id) DO NOTHING;"
+              # Force a WAL segment switch so pgBackRest archives the insert
+              # above promptly instead of waiting on the archive timeout.
+              kubectl exec pg-src-client -n ${NAMESPACE} -- psql "$CONN_URI" -v ON_ERROR_STOP=1 \
+                -c "SELECT pg_switch_wal();"
+
+    - name: capture-pitr-target
+      try:
+        - script:
+            content: |
+              # Capture a recovery target strictly after (2) was archived above
+              # and before (3) is written below, using the source's own clock
+              # (avoids skew with the machine running chainsaw) formatted as
+              # RFC 3339 so it can be used verbatim as dataSource.pointInTime.date.
+              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-src-conn -o jsonpath='{.data.uri}' | base64 --decode)"
+              PITR_TARGET=$(kubectl exec pg-src-client -n ${NAMESPACE} -- psql "$CONN_URI" -tA \
+                -c "SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD') || 'T' || to_char(now() AT TIME ZONE 'UTC', 'HH24:MI:SS') || 'Z';")
+              echo "PITR target: $PITR_TARGET"
+              kubectl create configmap pitr-target -n ${NAMESPACE} --from-literal=date="$PITR_TARGET"
+
+    - name: wait-1-minute
+      try:
+        - script:
+            timeout: 90s
+            content: |
+              # Separates the PITR target captured above from (3) written next,
+              # well past any clock-rounding or archive-timing jitter.
+              sleep 60
+
+    - name: add-data-3
+      try:
+        - script:
+            content: |
+              # (3): written after the recovery target captured above, so the
+              # PITR-seeded clone (recovering to that earlier moment) must not
+              # see it.
+              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-src-conn -o jsonpath='{.data.uri}' | base64 --decode)"
+              kubectl exec pg-src-client -n ${NAMESPACE} -- psql "$CONN_URI" -v ON_ERROR_STOP=1 \
+                -c "INSERT INTO test(id) VALUES ('data-3') ON CONFLICT (id) DO NOTHING;"
+
+    - name: create-clone-from-backup
+      try:
+        - apply:
+            file: 70-create-clone-backup.yaml
+        - assert:
+            timeout: 360s
+            file: 70-assert.yaml
+
+    - name: clone-from-backup-seeded
+      try:
+        - assert:
+            timeout: 480s
+            file: 80-assert.yaml
+
+    - name: verify-clone-from-backup-data
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              kubectl run -n "${NAMESPACE}" pg-clone-backup-client --env="NO_COLOR=1" --image=postgres:17 --restart=Never --command -- sleep 600
+              kubectl wait --for=condition=Ready pod/pg-clone-backup-client --timeout=60s -n ${NAMESPACE}
+        - script:
+            timeout: 90s
+            content: |
+              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-clone-backup-conn -o jsonpath='{.data.uri}' | base64 --decode)"
+              found=$(kubectl exec pg-clone-backup-client -n ${NAMESPACE} -- psql "$CONN_URI" -tA -c "SELECT id FROM test ORDER BY id;")
+              echo "Found: $found"
+              test "$(echo "$found" | tr -d '[:space:]')" = "data-1"
+      catch:
+        - script:
+            content: kubectl get pod/pg-clone-backup-client -n $NAMESPACE -o yaml
+
+    - name: create-clone-from-pitr
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              # recoveryTarget can't be a static file: the target is the
+              # timestamp captured in capture-pitr-target above, known only at
+              # runtime, so the Instance is rendered and applied here instead
+              # of from a checked-in manifest.
+              PITR_TARGET=$(kubectl get configmap/pitr-target -n ${NAMESPACE} -o jsonpath='{.data.date}')
+              echo "Restoring pg-clone-pitr to recovery target: $PITR_TARGET"
+              cat <<EOF | kubectl apply -n "${NAMESPACE}" -f -
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: pg-clone-pitr
+              spec:
+                providerRef:
+                  name: provider-percona-postgresql
+                dataSource:
+                  type: PointInTime
+                  pointInTime:
+                    source:
+                      instanceRef:
+                        name: pg-src
+                      storageRef:
+                        name: seaweedfs-storage
+                    recoveryTarget: date
+                    date: "${PITR_TARGET}"
+                backup:
+                  enabled: true
+                  classRef:
+                    name: percona-backup-postgresql
+                  storages:
+                    # Must match the storage the source stream is archived to so the
+                    # provider can read the WAL; a schedule keeps the provider from
+                    # pruning it as unreferenced before the seeding restore completes.
+                    - storageRef:
+                        name: seaweedfs-storage
+                      schedules:
+                        - name: full
+                          enabled: true
+                          cron: "0 4 * * *"
+                topology:
+                  type: cluster
+                components:
+                  engine:
+                    type: postgresql
+                    replicas: 1
+                    storage:
+                      size: 1Gi
+                    resources:
+                      limits:
+                        cpu: 600m
+                        memory: 512Mi
+                      requests:
+                        cpu: 300m
+                        memory: 256Mi
+                  proxy:
+                    type: pgbouncer
+                    replicas: 1
+                    resources:
+                      limits:
+                        cpu: 200m
+                        memory: 128Mi
+              EOF
+        - assert:
+            timeout: 360s
+            file: 100-assert.yaml
+
+    - name: clone-from-pitr-seeded
+      try:
+        - assert:
+            timeout: 480s
+            file: 110-assert.yaml
+
+    - name: verify-clone-from-pitr-data
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              kubectl run -n "${NAMESPACE}" pg-clone-pitr-client --env="NO_COLOR=1" --image=postgres:17 --restart=Never --command -- sleep 600
+              kubectl wait --for=condition=Ready pod/pg-clone-pitr-client --timeout=60s -n ${NAMESPACE}
+        - script:
+            timeout: 90s
+            content: |
+              CONN_URI="$(kubectl get -n ${NAMESPACE} secret/pg-clone-pitr-conn -o jsonpath='{.data.uri}' | base64 --decode)"
+              found=$(kubectl exec pg-clone-pitr-client -n ${NAMESPACE} -- psql "$CONN_URI" -tA -c "SELECT id FROM test ORDER BY id;")
+              echo "Found: $found"
+              # Convert the newline-separated rows into commas *before* stripping
+              # other whitespace, otherwise the row separator is lost and the two
+              # ids get concatenated together instead of comma-joined.
+              test "$(echo "$found" | tr '\n' ',' | tr -d ' ')" = "data-1,data-2,"
+      catch:
+        - script:
+            content: kubectl get pod/pg-clone-pitr-client -n $NAMESPACE -o yaml
+
+    - name: cleanup
+      try:
+        - script:
+            timeout: 120s
+            content: |
+              kubectl delete instance/pg-clone-pitr -n $NAMESPACE --ignore-not-found || true
+              kubectl delete instance/pg-clone-backup -n $NAMESPACE --ignore-not-found || true
+              kubectl delete instance/pg-src -n $NAMESPACE --ignore-not-found || true
