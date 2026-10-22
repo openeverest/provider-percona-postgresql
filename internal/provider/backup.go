@@ -278,6 +278,16 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 		return *pending, nil
 	}
 
+	if isSeedingRestore(c, restore) {
+		sourceName, err := dataSourceSourceInstance(c, &restore.Spec.DataSource)
+		if err != nil {
+			return controller.RestoreExecutionStatus{}, err
+		}
+		if sourceName != restore.Spec.InstanceRef.Name {
+			return seedingRestoreStatus(c, restore, opRef)
+		}
+	}
+
 	opRestore := &pgv2.PerconaPGRestore{}
 	err = c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: restore.Name}, opRestore)
 	if err != nil {
@@ -458,7 +468,10 @@ func resolveBackupSource(
 	// ends up at the latest state rather than the backup's point-in-time.
 	options = append(options, "--type=immediate")
 
-	if sourceBackup.Spec.Origin.InstanceRef.Name != restore.Spec.InstanceRef.Name {
+	// Seeding a new Instance reads the source Instance's repo through the
+	// cluster's data source; any other restore can only read repos registered
+	// on its own cluster.
+	if sourceBackup.Spec.Origin.InstanceRef.Name != restore.Spec.InstanceRef.Name && !isSeedingRestore(c, restore) {
 		return nil, nil, &controller.RestoreExecutionStatus{
 			State: backupv1alpha1.RestoreStateFailed,
 			Message: fmt.Sprintf(
@@ -504,7 +517,8 @@ func resolvePointInTimeSource(
 	// A PerconaPGRestore reads from a repo registered on the target cluster,
 	// and repo paths embed the owning cluster's identity -- another Instance's
 	// WAL stream is not reachable through them.
-	if pitr.Source.InstanceRef != nil && pitr.Source.InstanceRef.Name != restore.Spec.InstanceRef.Name {
+	foreign := pitr.Source.InstanceRef != nil && pitr.Source.InstanceRef.Name != restore.Spec.InstanceRef.Name
+	if foreign && !isSeedingRestore(c, restore) {
 		return nil, nil, &controller.RestoreExecutionStatus{
 			State:              backupv1alpha1.RestoreStateFailed,
 			Message:            "This provider only supports point-in-time recovery of the target Instance's own stream",
@@ -512,19 +526,33 @@ func resolvePointInTimeSource(
 		}, nil
 	}
 
+	// The stream's repo is registered on the cluster that archives it: the
+	// target's own, or the source Instance's when seeding.
+	clusterName := restore.Spec.InstanceRef.Name
+	if foreign {
+		clusterName = pitr.Source.InstanceRef.Name
+	}
 	pgCluster := &pgv2.PerconaPGCluster{}
-	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: restore.Spec.InstanceRef.Name}, pgCluster); err != nil {
+	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: restore.Namespace, Name: clusterName}, pgCluster); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, nil, &controller.RestoreExecutionStatus{
 				State:              backupv1alpha1.RestoreStatePending,
-				Message:            fmt.Sprintf("Waiting for PerconaPGCluster %q", restore.Spec.InstanceRef.Name),
+				Message:            fmt.Sprintf("Waiting for PerconaPGCluster %q", clusterName),
 				OperatorRestoreRef: opRef,
 			}, nil
 		}
-		return nil, nil, nil, fmt.Errorf("get PerconaPGCluster %q: %w", restore.Spec.InstanceRef.Name, err)
+		return nil, nil, nil, fmt.Errorf("get PerconaPGCluster %q: %w", clusterName, err)
 	}
 
-	repoName, found := storageNameToRepoName(c, pitr.Source.StorageRef.Name, pgCluster)
+	var repoName string
+	var found bool
+	if foreign {
+		var slot int
+		slot, found = loadRepoSlotMap(pgCluster)[pitr.Source.StorageRef.Name]
+		repoName = pgBackRestRepoName(slot)
+	} else {
+		repoName, found = storageNameToRepoName(c, pitr.Source.StorageRef.Name, pgCluster)
+	}
 	if !found || !hasRepo(pgCluster, repoName) {
 		return nil, nil, &controller.RestoreExecutionStatus{
 			State:              backupv1alpha1.RestoreStatePending,

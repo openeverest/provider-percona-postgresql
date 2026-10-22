@@ -688,17 +688,24 @@ func (p *Provider) OperatorBackupType() client.Object {
 }
 
 // pruneUnreferencedStorages removes storages from the Instance spec that have
-// no schedules configured AND are not referenced by any existing Backup CR.
-// This automatically frees repo slots when a storage is no longer in use.
-// Returns true if the Instance was modified (and patched).
-//
-// TODO: When seeding from Backup, PITR, or Import is supported, this logic
-// must also check whether the storage is in use by an active restore CR.
-// The storage is needed for the duration of the seeding operation even if
-// there are no schedules or Backup CRs referencing it.
+// no schedules configured, are not referenced by any existing Backup CR, and
+// are not the storage spec.dataSource depends on. This automatically frees
+// repo slots when a storage is no longer in use. Returns true if the Instance
+// was modified (and patched).
 func pruneUnreferencedStorages(c *controller.Context) (bool, error) {
 	if c.Instance().Spec.Backup == nil || len(c.Instance().Spec.Backup.Storages) == 0 {
 		return false, nil
+	}
+	var dataSourceStorage string
+	if ds := c.Instance().Spec.DataSource; ds != nil {
+		name, err := dataSourceStorageName(c, ds)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("resolve data source storage for pruning: %w", err)
+		}
+		dataSourceStorage = name
 	}
 
 	// List all Backup CRs for this instance.
@@ -717,12 +724,14 @@ func pruneUnreferencedStorages(c *controller.Context) (bool, error) {
 		}
 	}
 
-	// Filter: keep storages that have schedules OR are referenced by backups.
+	// Filter: keep storages that have schedules, are referenced by backups,
+	// or are what spec.dataSource reads from.
 	var kept []corev1alpha1.InstanceBackupStorage
 	for _, storage := range c.Instance().Spec.Backup.Storages {
 		hasSchedules := len(storage.Schedules) > 0
 		_, hasBackups := referencedStorages[storage.StorageRef.Name]
-		if hasSchedules || hasBackups {
+		isDataSourceStorage := dataSourceStorage != "" && storage.StorageRef.Name == dataSourceStorage
+		if hasSchedules || hasBackups || isDataSourceStorage {
 			kept = append(kept, storage)
 		}
 	}

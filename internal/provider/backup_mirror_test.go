@@ -810,6 +810,170 @@ func TestPruneUnreferencedStorages_NoPruneWhenAllReferenced(t *testing.T) {
 	assert.Len(t, c.Instance().Spec.Backup.Storages, 2)
 }
 
+// TestPruneUnreferencedStorages_KeepsPointInTimeDataSourceStorage is a
+// regression test: a brand-new Instance seeded via spec.dataSource.pointInTime
+// registers the source storage with no schedule and no Backup CR of its own
+// yet, since none has been created for this Instance. Pruning it would both
+// abort the in-progress seeding restore and make the Instance's own spec
+// invalid, since spec.dataSource requires at least one matching storage.
+func TestPruneUnreferencedStorages_KeepsPointInTimeDataSourceStorage(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "pg-clone", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
+			DataSource: &backupv1alpha1.DataSource{
+				Type: backupv1alpha1.DataSourceTypePointInTime,
+				PointInTime: &backupv1alpha1.DataSourcePointInTime{
+					Source: backupv1alpha1.StreamSource{
+						InstanceRef: &apicommon.ObjectRef{Name: "pg-src"},
+						StorageRef:  apicommon.ObjectRef{Name: "shared-storage"},
+					},
+					RecoveryTarget: backupv1alpha1.RecoveryTargetLatest,
+				},
+			},
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				Enabled:  true,
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{
+					{
+						// No schedules, no Backup CR yet — only protected by
+						// being the storage spec.dataSource reads from.
+						StorageRef: apicommon.ObjectRef{Name: "shared-storage"},
+					},
+				},
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance).
+		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
+			return []string{obj.(*backupv1alpha1.Backup).Spec.Origin.InstanceRef.Name}
+		}).
+		Build()
+
+	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+
+	pruned, err := pruneUnreferencedStorages(c)
+	require.NoError(t, err)
+	assert.False(t, pruned, "the data source storage must not be pruned")
+	require.Len(t, c.Instance().Spec.Backup.Storages, 1)
+	assert.Equal(t, "shared-storage", c.Instance().Spec.Backup.Storages[0].StorageRef.Name)
+	assert.True(t, c.Instance().Spec.Backup.Enabled, "backup must stay enabled while spec.dataSource is set")
+}
+
+// TestPruneUnreferencedStorages_KeepsBackupDataSourceStorage is the same
+// regression as above for spec.dataSource.type=Backup: the storage used by
+// the source Backup must be kept even before any Backup CR of this Instance
+// exists.
+func TestPruneUnreferencedStorages_KeepsBackupDataSourceStorage(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "pg-clone", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
+			DataSource: &backupv1alpha1.DataSource{
+				Type:   backupv1alpha1.DataSourceTypeBackup,
+				Backup: &backupv1alpha1.DataSourceBackup{BackupRef: apicommon.ObjectRef{Name: "src-backup"}},
+			},
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				Enabled:  true,
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{
+					{StorageRef: apicommon.ObjectRef{Name: "shared-storage"}},
+				},
+			},
+		},
+	}
+
+	// The source Backup, belonging to a different Instance, pinned to the
+	// same storage the clone registers.
+	srcBackup := &backupv1alpha1.Backup{
+		ObjectMeta: metav1.ObjectMeta{Name: "src-backup", Namespace: "default"},
+		Spec: backupv1alpha1.BackupSpec{
+			Origin: backupv1alpha1.BackupOrigin{
+				Type:        backupv1alpha1.BackupOriginTypeInstance,
+				InstanceRef: &apicommon.ObjectRef{Name: "pg-src"},
+			},
+			ClassRef:   apicommon.ObjectRef{Name: "pg"},
+			StorageRef: apicommon.ObjectRef{Name: "shared-storage"},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance, srcBackup).
+		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
+			return []string{obj.(*backupv1alpha1.Backup).Spec.Origin.InstanceRef.Name}
+		}).
+		Build()
+
+	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+
+	pruned, err := pruneUnreferencedStorages(c)
+	require.NoError(t, err)
+	assert.False(t, pruned, "the data source storage must not be pruned")
+	require.Len(t, c.Instance().Spec.Backup.Storages, 1)
+	assert.Equal(t, "shared-storage", c.Instance().Spec.Backup.Storages[0].StorageRef.Name)
+}
+
+// TestPruneUnreferencedStorages_WaitsWhenBackupDataSourceNotFoundYet verifies
+// that pruning is skipped entirely (rather than erroring or pruning
+// aggressively) when the source Backup referenced by spec.dataSource cannot
+// be resolved yet.
+func TestPruneUnreferencedStorages_WaitsWhenBackupDataSourceNotFoundYet(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "pg-clone", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
+			DataSource: &backupv1alpha1.DataSource{
+				Type:   backupv1alpha1.DataSourceTypeBackup,
+				Backup: &backupv1alpha1.DataSourceBackup{BackupRef: apicommon.ObjectRef{Name: "missing-backup"}},
+			},
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				Enabled:  true,
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{
+					{StorageRef: apicommon.ObjectRef{Name: "shared-storage"}},
+				},
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(instance).
+		WithIndex(&backupv1alpha1.Backup{}, controller.IndexBackupInstanceName, func(obj client.Object) []string {
+			return []string{obj.(*backupv1alpha1.Backup).Spec.Origin.InstanceRef.Name}
+		}).
+		Build()
+
+	c := controller.NewContext(context.Background(), k8sClient, instance, "provider-percona-postgresql")
+
+	pruned, err := pruneUnreferencedStorages(c)
+	require.NoError(t, err)
+	assert.False(t, pruned)
+	assert.Len(t, c.Instance().Spec.Backup.Storages, 1, "storage must be left untouched while the source cannot be resolved")
+}
+
 // TestAutoRegisterStorage_RegistersNewStorage demonstrates that when a Backup CR
 // references a storage not yet on the Instance, the provider automatically adds
 // it if a BackupStorage resource with that name exists.
