@@ -233,7 +233,7 @@ ui:
                             message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_connections: "500"'
                 podSchedulingPolicy:
                   uiType: group
-                  groupType: toggleable
+                  groupType: bordered
                   label: "Pod scheduling policy"
                   description: "Control how database pods are scheduled onto nodes using affinity rules."
                   components:

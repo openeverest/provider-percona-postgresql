@@ -78,6 +78,10 @@ spec:
     proxy:
       type: pgbouncer
   defaultVersion: 18.4-1
+  monitoring:
+    integrations:
+      pmm:
+        agentVersions: '>=3.0.0 <4.0.0'
   release:
     version: 0.4.0
   topologies:
@@ -119,7 +123,7 @@ spec:
               componentsOrder:
                 - policy
               description: Control how database pods are scheduled onto nodes using affinity rules.
-              groupType: toggleable
+              groupType: bordered
               label: Pod scheduling policy
               uiType: group
           componentsOrder:
