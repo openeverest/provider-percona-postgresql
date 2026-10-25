@@ -7,10 +7,8 @@ import (
 	"net/url"
 	"regexp"
 
-	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
-	"github.com/openeverest/provider-percona-postgresql/definition/components"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,7 +17,6 @@ import (
 )
 
 const (
-	monitoringConfigRefFieldPath = "spec.components.monitoring.parameters.monitoringConfigName"
 	// pmmIntegration is the integration declared in definition/monitoring.yaml.
 	pmmIntegration         = "pmm"
 	pmmDestinationTokenKey = "apiKey"
@@ -153,22 +150,6 @@ var invalidPrometheusLabelChars = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 // label name the way Prometheus does for Kubernetes service discovery.
 func prometheusLabelName(key string) string {
 	return invalidPrometheusLabelChars.ReplaceAllString(key, "_")
-}
-
-func monitoringConfigNameFromComponent(component corev1alpha1.ComponentSpec) (string, error) {
-	if component.Parameters == nil || len(component.Parameters.Raw) == 0 {
-		return "", nil
-	}
-
-	cfg := &components.PmmParameters{}
-	if err := json.Unmarshal(component.Parameters.Raw, cfg); err != nil {
-		return "", fmt.Errorf("decode monitoring component parameters: %w", err)
-	}
-	if cfg.MonitoringConfigName == nil {
-		return "", nil
-	}
-
-	return *cfg.MonitoringConfigName, nil
 }
 
 func syncPMMCredentials(c *controller.Context, credentialsSecretName, pmmSecretName string) error {

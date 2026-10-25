@@ -5,12 +5,6 @@ const (
 	// ProviderName is the canonical name of this provider.
 	ProviderName = "provider-percona-postgresql"
 
-	ComponentEngine     = "engine"
-	ComponentProxy      = "proxy"
-	ComponentMonitoring = "monitoring"
-)
-
-// Monitoring type constants supported by the provider.
-const (
-	MonitoringTypePMM = "pmm"
+	ComponentEngine = "engine"
+	ComponentProxy  = "proxy"
 )

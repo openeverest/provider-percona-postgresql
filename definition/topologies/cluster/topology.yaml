@@ -17,8 +17,6 @@ config:
         proxy:
             type: pgbouncer
             replicas: 2
-        monitoring:
-            optional: true
 ui:
     sections:
         databaseVersion:
@@ -199,18 +197,6 @@ ui:
             - proxyNodes
             - proxyLimits
             - proxyRequests
-        monitoring:
-            label: Monitoring
-            description: Attach a MonitoringConfig to collect metrics.
-            components:
-                monitoring:
-                    uiType: select
-                    path: spec.components.monitoring.parameters.monitoringConfigName
-                    fieldParams:
-                        label: Monitoring endpoint
-                        displayEmpty: true
-                    dataSource:
-                        provider: monitoringConfigs
         advanced:
             label: Advanced Configuration
             description: Fine-tune PostgreSQL by overriding its default configuration parameters.
@@ -249,5 +235,4 @@ ui:
         - databaseVersion
         - resources
         - proxy
-        - monitoring
         - advanced

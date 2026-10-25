@@ -10,9 +10,9 @@ spec:
     seeded row is back.
   catch:
     - script:
-        content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com,backup,perconapgbackups.pgv2.percona.com,restore,perconapgrestores.pgv2.percona.com,backupstorage,monitoringconfig -o yaml
+        content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com,backup,perconapgbackups.pgv2.percona.com,restore,perconapgrestores.pgv2.percona.com,backupstorage,monitoringdestination,monitoringbinding -o yaml
     - script:
-        content: kubectl get backupclass -o yaml
+        content: kubectl get backupclass,monitoringclass -o yaml
     - script:
         content: kubectl -n pmm get pods -o yaml
     - podLogs:
@@ -47,10 +47,10 @@ spec:
             content: |
               kubectl -n pmm wait --for=condition=Ready pod -l app=pmm-server --timeout=360s
         # Provision a PMM3 service-account token (default admin/admin creds),
-        # then create the credentials Secret the MonitoringConfig references.
-        # The token is dynamic, so the Secret is created via script rather
-        # than a static manifest; the MonitoringConfig itself lives in
-        # 20-install.yaml.
+        # then create the credentials Secret the MonitoringDestination
+        # references. The token is dynamic, so the Secret is created via script
+        # rather than a static manifest; the MonitoringDestination itself lives
+        # in 20-install.yaml.
         - script:
             timeout: 120s
             content: |
@@ -88,7 +88,7 @@ spec:
 
               test -n "${TOKEN}"
 
-              kubectl -n ${NAMESPACE} create secret generic mc-pmm-secret \
+              kubectl -n ${NAMESPACE} create secret generic pmm-credentials \
                 --from-literal=apiKey="${TOKEN}" \
                 --dry-run=client -o yaml | kubectl apply -f -
       catch:
@@ -101,6 +101,11 @@ spec:
       try:
         - apply:
             file: 20-install.yaml
+        # The monitoring-pmm controller is not installed: claim its class by hand.
+        - script:
+            content: |
+              kubectl patch monitoringclass/pmm-e2e --subresource status --type merge \
+                -p '{"status":{"conditions":[{"type":"Accepted","status":"True","reason":"Accepted","message":"claimed by the test","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}'
         - assert:
             file: 20-assert.yaml
 

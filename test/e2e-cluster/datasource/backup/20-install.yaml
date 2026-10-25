@@ -36,16 +36,56 @@ spec:
     limits:
       maxPITREnabledStorages: 1
 ---
+# The pmm class as the monitoring-pmm chart ships it, under a test-local name.
 apiVersion: monitoring.openeverest.io/v1alpha1
-kind: MonitoringConfig
+kind: MonitoringClass
 metadata:
-  name: mc-pmm
+  name: pmm-e2e
 spec:
-  type: pmm
-  pmm:
-    # The credentials Secret is created dynamically in the deploy-pmm step,
-    # since the PMM service-account token is generated at runtime.
-    credentialsSecretRef:
-      name: mc-pmm-secret
-    verifyTLS: false
+  controllerName: openeverest.io/monitoring-pmm
+  providerManaged:
+    integration: pmm
+    agentImage: percona/pmm-client:3.8.0
+    agentVersion: 3.8.0
+  destinationParametersSchema:
+    openAPIV3Schema:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          pattern: '^https?://.+'
+        verifyTLS:
+          type: boolean
+  instanceParametersSchema:
+    openAPIV3Schema:
+      type: object
+      properties:
+        resources:
+          type: object
+          properties:
+            limits:
+              type: object
+              additionalProperties:
+                type: string
+            requests:
+              type: object
+              additionalProperties:
+                type: string
+  credentialsSchema:
+    required: [apiKey]
+---
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringDestination
+metadata:
+  name: pmm
+spec:
+  classRef:
+    name: pmm-e2e
+  # The credentials Secret is created dynamically in the deploy-pmm step,
+  # since the PMM service-account token is generated at runtime.
+  credentialsSecretRef:
+    name: pmm-credentials
+  parameters:
     url: https://pmm-server.pmm.svc
+    verifyTLS: false

@@ -120,7 +120,6 @@
   resources:
     - monitoringbindings
     - monitoringclasses
-    - monitoringconfigs
     - monitoringdestinations
   verbs:
     - get

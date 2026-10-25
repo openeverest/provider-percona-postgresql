@@ -26,11 +26,3 @@ type PostgresqlParameters struct {
 	// +optional
 	Configuration string `json:"configuration,omitempty"`
 }
-
-// PmmParameters defines custom parameters for PMM monitoring.
-type PmmParameters struct {
-	// MonitoringConfigName specifies the name of the MonitoringConfig resource
-	// to use for configuring PMM monitoring.
-	// If not specified, monitoring will not be configured.
-	MonitoringConfigName *string `json:"monitoringConfigName,omitempty"`
-}
