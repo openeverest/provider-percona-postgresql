@@ -203,21 +203,23 @@ func TestApplyPMMRendersTheBinding(t *testing.T) {
 func TestApplyPMMHoldsTheLiveRendering(t *testing.T) {
 	t.Parallel()
 
-	notAccepted := acceptedBinding("pmm", "pmm", corev1alpha1.MonitoringExecutionModeProviderManaged)
-	notAccepted.Status.Conditions[0].Status = metav1.ConditionFalse
-	notAccepted.Status.Conditions[0].Reason = "ClassNotAccepted"
-	accepted := acceptedBinding("pmm", "pmm", corev1alpha1.MonitoringExecutionModeProviderManaged)
+	notAccepted := func() *monitoringv1alpha1.MonitoringBinding {
+		b := acceptedBinding("pmm", "pmm", corev1alpha1.MonitoringExecutionModeProviderManaged)
+		b.Status.Conditions[0].Status = metav1.ConditionFalse
+		b.Status.Conditions[0].Reason = "ClassNotAccepted"
+		return b
+	}
 
 	tests := map[string]struct {
 		objs []client.Object
 		live *pgv2.PerconaPGCluster
 	}{
 		"binding not Accepted": {
-			objs: []client.Object{pmmClass(), pmmDestination(), pmmTokenSecret(), notAccepted},
+			objs: []client.Object{pmmClass(), pmmDestination(), pmmTokenSecret(), notAccepted()},
 			live: liveCluster(),
 		},
 		"destination deleted": {
-			objs: []client.Object{pmmClass(), pmmTokenSecret(), accepted},
+			objs: []client.Object{pmmClass(), pmmTokenSecret(), acceptedBinding("pmm", "pmm", corev1alpha1.MonitoringExecutionModeProviderManaged)},
 			live: liveCluster(),
 		},
 		"binding not created yet": {
@@ -225,7 +227,7 @@ func TestApplyPMMHoldsTheLiveRendering(t *testing.T) {
 			live: liveCluster(),
 		},
 		"nothing live to hold": {
-			objs: []client.Object{pmmClass(), pmmDestination(), pmmTokenSecret(), notAccepted},
+			objs: []client.Object{pmmClass(), pmmDestination(), pmmTokenSecret(), notAccepted()},
 			live: &pgv2.PerconaPGCluster{ObjectMeta: metav1.ObjectMeta{Name: pmmTestInstance, Namespace: pmmTestNamespace}},
 		},
 	}
