@@ -391,7 +391,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
-	if err := applyMonitoringSettings(c, cluster, providerSpec); err != nil {
+	if err := applyPMM(c, cluster); err != nil {
 		return err
 	}
 
