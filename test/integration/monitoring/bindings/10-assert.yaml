@@ -46,11 +46,17 @@ spec:
       limits:
         memory: 400Mi
 ---
-# The destination token, mirrored where the operator reads it.
+# The destination token, mirrored where the operator reads it and owned by the
+# Instance.
 apiVersion: v1
 kind: Secret
 metadata:
   name: pg-bindings-pmm-secret
+  ownerReferences:
+    - apiVersion: core.openeverest.io/v1alpha1
+      kind: Instance
+      name: pg-bindings
+      controller: true
 type: Opaque
 data:
   PMM_SERVER_TOKEN: YWJjZGVm

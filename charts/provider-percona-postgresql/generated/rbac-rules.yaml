@@ -10,12 +10,6 @@
 - apiGroups:
     - ""
   resources:
-    - namespaces
-  verbs:
-    - get
-- apiGroups:
-    - ""
-  resources:
     - pods
   verbs:
     - get

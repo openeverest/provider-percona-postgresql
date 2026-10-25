@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
@@ -18,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 const (
@@ -40,7 +43,7 @@ func TestPMMAdminParamsLabelTheInstance(t *testing.T) {
 
 // newPMMTestContext returns a Context for in whose client holds objs and the
 // Provider, which declares the pmm integration.
-func newPMMTestContext(t *testing.T, in *corev1alpha1.Instance, objs ...client.Object) (*controller.Context, client.Client) {
+func newPMMTestContext(t *testing.T, in *corev1alpha1.Instance, objs ...client.Object) (*controller.Context, client.WithWatch) {
 	t.Helper()
 	s := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(s))
@@ -166,7 +169,7 @@ func TestApplyPMMRendersTheBinding(t *testing.T) {
 			t.Parallel()
 
 			b := acceptedBinding("pmm", "pmm", corev1alpha1.MonitoringExecutionModeProviderManaged)
-			b.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"resources":{"limits":{"memory":"400Mi"}}}`)}
+			b.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"resources":{"requests":{"memory":"400Mi"},"limits":{"memory":"400Mi"}}}`)}
 			objs := []client.Object{pmmClass(), pmmDestination(), pmmTokenSecret(), b, liveCluster()}
 			if tt.existingMirror != nil {
 				objs = append(objs, tt.existingMirror)
@@ -178,6 +181,7 @@ func TestApplyPMMRendersTheBinding(t *testing.T) {
 
 			got := cluster.Spec.PMM
 			require.NotNil(t, got)
+			assert.Equal(t, "400Mi", got.Resources.Requests.Memory().String())
 			assert.Equal(t, "400Mi", got.Resources.Limits.Memory().String())
 			got.Resources = corev1.ResourceRequirements{}
 			assert.Equal(t, &pgv2.PMMSpec{
@@ -193,6 +197,10 @@ func TestApplyPMMRendersTheBinding(t *testing.T) {
 			mirror := &corev1.Secret{}
 			require.NoError(t, k8s.Get(t.Context(), client.ObjectKey{Namespace: pmmTestNamespace, Name: "orders-pmm-secret"}, mirror))
 			assert.Equal(t, pmmTestToken, string(mirror.Data["PMM_SERVER_TOKEN"]))
+			require.Len(t, mirror.OwnerReferences, 1)
+			assert.Equal(t, "Instance", mirror.OwnerReferences[0].Kind)
+			assert.Equal(t, pmmTestInstance, mirror.OwnerReferences[0].Name)
+			assert.Equal(t, new(true), mirror.OwnerReferences[0].Controller, "the Secret is deleted with the Instance")
 
 			_, _, staged := c.MonitoringBindingResult(b.Name)
 			assert.False(t, staged, "a rendered binding is reported Configured by the runtime")
@@ -251,8 +259,9 @@ func TestApplyPMMReportsRenderFailed(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		mutate  func(*monitoringv1alpha1.MonitoringClass, *monitoringv1alpha1.MonitoringDestination, *corev1.Secret)
-		message string
+		mutate        func(*monitoringv1alpha1.MonitoringClass, *monitoringv1alpha1.MonitoringDestination, *corev1.Secret)
+		bindingParams string
+		message       string
 	}{
 		"relative URL": {
 			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
@@ -284,14 +293,23 @@ func TestApplyPMMReportsRenderFailed(t *testing.T) {
 			},
 			message: `MonitoringClass "pmm" sets no providerManaged.agentImage`,
 		},
+		"request above its limit": {
+			bindingParams: `{"resources":{"requests":{"cpu":"100m","memory":"500Mi"},"limits":{"cpu":"1","memory":"400Mi"}}}`,
+			message:       `parameters.resources: memory request 500Mi exceeds its limit 400Mi`,
+		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			class, dst, token := pmmClass(), pmmDestination(), pmmTokenSecret()
-			tt.mutate(class, dst, token)
+			if tt.mutate != nil {
+				tt.mutate(class, dst, token)
+			}
 			b := acceptedBinding("pmm", "pmm", corev1alpha1.MonitoringExecutionModeProviderManaged)
+			if tt.bindingParams != "" {
+				b.Spec.Parameters = &runtime.RawExtension{Raw: []byte(tt.bindingParams)}
+			}
 			live := liveCluster()
 			c, k8s := newPMMTestContext(t, monitoredInstance("pmm"), class, dst, token, b, live)
 
@@ -305,6 +323,43 @@ func TestApplyPMMReportsRenderFailed(t *testing.T) {
 			assert.Equal(t, live.Spec.PMM, cluster.Spec.PMM, "a binding that fails to render keeps the live rendering")
 			err := k8s.Get(t.Context(), client.ObjectKey{Namespace: pmmTestNamespace, Name: "orders-pmm-secret"}, &corev1.Secret{})
 			assert.True(t, apierrors.IsNotFound(err), "no token is copied for a failed render, got %v", err)
+		})
+	}
+}
+
+func TestApplyPMMReturnsAPIErrors(t *testing.T) {
+	t.Parallel()
+
+	errUnavailable := errors.New("apiserver unavailable")
+	tests := map[string]interceptor.Funcs{
+		"credentials Secret read fails": {
+			Get: func(ctx context.Context, k8s client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if key.Name == "pmm-token" {
+					return errUnavailable
+				}
+				return k8s.Get(ctx, key, obj, opts...)
+			},
+		},
+		"token Secret apply fails": {
+			Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
+				return errUnavailable
+			},
+		},
+	}
+	for name, funcs := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			in := monitoredInstance("pmm")
+			b := acceptedBinding("pmm", "pmm", corev1alpha1.MonitoringExecutionModeProviderManaged)
+			_, k8s := newPMMTestContext(t, in, pmmClass(), pmmDestination(), pmmTokenSecret(), b, liveCluster())
+			c := controller.NewContext(t.Context(), interceptor.NewClient(k8s, funcs), in, common.ProviderName)
+
+			err := applyPMM(c, &pgv2.PerconaPGCluster{})
+
+			require.ErrorIs(t, err, errUnavailable, "Sync fails and is retried")
+			_, _, staged := c.MonitoringBindingResult(b.Name)
+			assert.False(t, staged, "an API error is not reported as RenderFailed")
 		})
 	}
 }
@@ -325,25 +380,47 @@ func TestApplyPMMDisabledWithoutPMMBinding(t *testing.T) {
 	tests := map[string]struct {
 		in   *corev1alpha1.Instance
 		objs []client.Object
+		live *pgv2.PerconaPGCluster
+		// mirrorKept is whether the token Secret survives: the operator may
+		// still run the agent until the live cluster has PMM off.
+		mirrorKept bool
 	}{
 		"no destinations": {
-			in: monitoredInstance(),
+			in:         monitoredInstance(),
+			live:       liveCluster(),
+			mirrorKept: true,
 		},
 		"only an ExtensionManaged destination": {
-			in:   monitoredInstance("prometheus"),
-			objs: []client.Object{prometheus, acceptedBinding("prometheus", "prometheus", corev1alpha1.MonitoringExecutionModeExtensionManaged)},
+			in:         monitoredInstance("prometheus"),
+			objs:       []client.Object{prometheus, acceptedBinding("prometheus", "prometheus", corev1alpha1.MonitoringExecutionModeExtensionManaged)},
+			live:       liveCluster(),
+			mirrorKept: true,
+		},
+		"PMM already off in the live cluster": {
+			in:   monitoredInstance(),
+			live: &pgv2.PerconaPGCluster{ObjectMeta: metav1.ObjectMeta{Name: pmmTestInstance, Namespace: pmmTestNamespace}},
 		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			c, _ := newPMMTestContext(t, tt.in, append(tt.objs, liveCluster())...)
+			mirror := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "orders-pmm-secret", Namespace: pmmTestNamespace},
+				Data:       map[string][]byte{"PMM_SERVER_TOKEN": []byte(pmmTestToken)},
+			}
+			c, k8s := newPMMTestContext(t, tt.in, append(tt.objs, tt.live, mirror)...)
 
 			cluster := &pgv2.PerconaPGCluster{}
 			require.NoError(t, applyPMM(c, cluster))
 
 			assert.Nil(t, cluster.Spec.PMM)
+			err := k8s.Get(t.Context(), client.ObjectKey{Namespace: pmmTestNamespace, Name: "orders-pmm-secret"}, &corev1.Secret{})
+			if tt.mirrorKept {
+				assert.NoError(t, err)
+			} else {
+				assert.True(t, apierrors.IsNotFound(err), "the token Secret is deleted, got %v", err)
+			}
 		})
 	}
 }

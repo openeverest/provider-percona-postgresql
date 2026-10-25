@@ -56,5 +56,3 @@ package provider
 // Allow the runtime to resolve MonitoringBindings and report their Configured condition.
 // +kubebuilder:rbac:groups=monitoring.openeverest.io,resources=monitoringclasses;monitoringdestinations;monitoringbindings,verbs=get;list;watch
 // +kubebuilder:rbac:groups=monitoring.openeverest.io,resources=monitoringbindings/status,verbs=patch
-// Allow the runtime to read the kube-system UID that identifies the cluster.
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get

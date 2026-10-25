@@ -1,11 +1,13 @@
 package provider
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
+	"slices"
 
 	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
@@ -21,6 +23,7 @@ const (
 	pmmIntegration         = "pmm"
 	pmmDestinationTokenKey = "apiKey"
 	pgPMMServerToken       = "PMM_SERVER_TOKEN"
+	pmmSecretSuffix        = "-pmm-secret"
 )
 
 // MonitoringIntegrations implements controller.MonitoringIntegrationsProvider.
@@ -42,10 +45,19 @@ type pmmInstanceParameters struct {
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
+// renderFailedError marks inputs the binding cannot be rendered from. It is
+// reported on the binding; any other error fails Sync and is retried.
+type renderFailedError struct{ error }
+
+func renderFailed(format string, args ...any) error {
+	return renderFailedError{fmt.Errorf(format, args...)}
+}
+
 // applyPMM renders spec.pmm from the Instance's pmm binding while one
-// requires it and disables it once none does. Otherwise, and when the
-// binding cannot be rendered, it keeps what the live cluster runs; a render
-// failure is reported on the binding and never fails Sync.
+// requires it and disables it once none does, deleting the token Secret once
+// the live cluster has PMM off. Otherwise, and when the binding cannot be
+// rendered, it keeps what the live cluster runs; a render failure is reported
+// on the binding and never fails Sync.
 func applyPMM(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
 	req, err := c.RequiredSources()
 	if err != nil {
@@ -59,6 +71,9 @@ func applyPMM(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
 	pmm := req.Integrations[pmmIntegration]
 	if !pmm.Else(live.PMMEnabled()) {
 		cluster.Spec.PMM = nil
+		if pmm == controller.NotRequired && !live.PMMEnabled() {
+			return deletePMMSecret(c)
+		}
 		return nil
 	}
 	cluster.Spec.PMM = live.Spec.PMM.DeepCopy()
@@ -75,10 +90,13 @@ func applyPMM(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
 			continue
 		}
 		spec, err := renderPMM(c, rb)
-		if err != nil {
+		if _, ok := errors.AsType[renderFailedError](err); ok {
 			log.FromContext(c.Context()).Error(err, "PMM binding could not be rendered", "binding", rb.Binding.Name)
 			c.SetMonitoringBindingResult(rb.Binding.Name, monitoringv1alpha1.ReasonRenderFailed, err.Error())
 			return nil
+		}
+		if err != nil {
+			return err
 		}
 		cluster.Spec.PMM = spec
 		return nil
@@ -92,29 +110,37 @@ func renderPMM(c *controller.Context, rb controller.ResolvedBinding) (*pgv2.PMMS
 	dst := pmmDestinationParameters{}
 	if rb.Destination.Spec.Parameters != nil {
 		if err := json.Unmarshal(rb.Destination.Spec.Parameters.Raw, &dst); err != nil {
-			return nil, fmt.Errorf("decode MonitoringDestination %q parameters: %w", rb.Destination.Name, err)
+			return nil, renderFailed("decode MonitoringDestination %q parameters: %w", rb.Destination.Name, err)
 		}
 	}
 	u, err := url.Parse(dst.URL)
 	if err != nil || u.Host == "" {
-		return nil, fmt.Errorf("MonitoringDestination %q parameters.url %q is not an absolute URL", rb.Destination.Name, dst.URL)
+		return nil, renderFailed("MonitoringDestination %q parameters.url %q is not an absolute URL", rb.Destination.Name, dst.URL)
 	}
 	if rb.Destination.Spec.CredentialsSecretRef == nil {
-		return nil, fmt.Errorf("MonitoringDestination %q sets no credentialsSecretRef", rb.Destination.Name)
+		return nil, renderFailed("MonitoringDestination %q sets no credentialsSecretRef", rb.Destination.Name)
 	}
 	image := rb.Class.Spec.ProviderManaged.AgentImage
 	if image == "" {
-		return nil, fmt.Errorf("MonitoringClass %q sets no providerManaged.agentImage", rb.Class.Name)
+		return nil, renderFailed("MonitoringClass %q sets no providerManaged.agentImage", rb.Class.Name)
 	}
 	params := pmmInstanceParameters{}
 	if rb.Binding.Spec.Parameters != nil {
 		if err := json.Unmarshal(rb.Binding.Spec.Parameters.Raw, &params); err != nil {
-			return nil, fmt.Errorf("decode MonitoringBinding %q parameters: %w", rb.Binding.Name, err)
+			return nil, renderFailed("decode MonitoringBinding %q parameters: %w", rb.Binding.Name, err)
+		}
+	}
+	if r := params.Resources; r != nil {
+		for _, name := range slices.Sorted(maps.Keys(r.Requests)) {
+			request := r.Requests[name]
+			if limit, ok := r.Limits[name]; ok && request.Cmp(limit) > 0 {
+				return nil, renderFailed("MonitoringBinding %q parameters.resources: %s request %s exceeds its limit %s", rb.Binding.Name, name, request.String(), limit.String())
+			}
 		}
 	}
 
-	pmmSecretName := c.Name() + "-pmm-secret"
-	if err := syncPMMCredentials(c, rb.Destination.Spec.CredentialsSecretRef.Name, pmmSecretName); err != nil {
+	pmmSecretName := c.Name() + pmmSecretSuffix
+	if err := mirrorPMMToken(c, rb.Destination.Spec.CredentialsSecretRef.Name, pmmSecretName); err != nil {
 		return nil, err
 	}
 
@@ -152,47 +178,38 @@ func prometheusLabelName(key string) string {
 	return invalidPrometheusLabelChars.ReplaceAllString(key, "_")
 }
 
-func syncPMMCredentials(c *controller.Context, credentialsSecretName, pmmSecretName string) error {
+// mirrorPMMToken applies the destination token to the Secret the operator
+// reads it from, owned by the Instance so it is deleted with it.
+func mirrorPMMToken(c *controller.Context, credentialsSecretName, pmmSecretName string) error {
 	credentialsSecret := &corev1.Secret{}
-	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: c.Namespace(), Name: credentialsSecretName}, credentialsSecret); err != nil {
+	if err := c.Get(credentialsSecret, credentialsSecretName); err != nil {
+		if apierrors.IsNotFound(err) {
+			return renderFailed("get PMM credentials Secret %q: %w", credentialsSecretName, err)
+		}
 		return fmt.Errorf("get PMM credentials Secret %q: %w", credentialsSecretName, err)
 	}
 	apiKey, ok := credentialsSecret.Data[pmmDestinationTokenKey]
 	if !ok || len(apiKey) == 0 {
-		return fmt.Errorf("PMM credentials Secret %q must contain non-empty %q key", credentialsSecretName, pmmDestinationTokenKey)
+		return renderFailed("PMM credentials Secret %q must contain non-empty %q key", credentialsSecretName, pmmDestinationTokenKey)
 	}
 
-	pmmSecret := &corev1.Secret{}
-	err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: c.Namespace(), Name: pmmSecretName}, pmmSecret)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			pmmSecret = &corev1.Secret{}
-			pmmSecret.Name = pmmSecretName
-			pmmSecret.Namespace = c.Namespace()
-			pmmSecret.Data = map[string][]byte{
-				pgPMMServerToken: append([]byte(nil), apiKey...),
-			}
-			if err := c.Client().Create(c.Context(), pmmSecret); err != nil {
-				return fmt.Errorf("create PMM secret %q: %w", pmmSecretName, err)
-			}
-			return nil
-		}
-		return fmt.Errorf("get PMM Secret %q: %w", pmmSecretName, err)
+	if err := c.Apply(&corev1.Secret{
+		ObjectMeta: c.ObjectMeta(pmmSecretName),
+		Data:       map[string][]byte{pgPMMServerToken: apiKey},
+	}); err != nil {
+		return fmt.Errorf("apply PMM Secret %q: %w", pmmSecretName, err)
 	}
+	return nil
+}
 
-	if pmmSecret.Data != nil && bytes.Equal(pmmSecret.Data[pgPMMServerToken], apiKey) {
-		return nil
+func deletePMMSecret(c *controller.Context) error {
+	secret := &corev1.Secret{}
+	exists, err := c.Exists(secret, c.Name()+pmmSecretSuffix)
+	if err != nil || !exists {
+		return err
 	}
-
-	orig := pmmSecret.DeepCopy()
-	if pmmSecret.Data == nil {
-		pmmSecret.Data = map[string][]byte{}
+	if err := c.Delete(secret); err != nil {
+		return fmt.Errorf("delete PMM Secret %q: %w", secret.Name, err)
 	}
-	pmmSecret.Data[pgPMMServerToken] = append([]byte(nil), apiKey...)
-
-	if err := c.Client().Patch(c.Context(), pmmSecret, client.MergeFrom(orig)); err != nil {
-		return fmt.Errorf("sync PMM credentials to Secret %q: %w", pmmSecretName, err)
-	}
-
 	return nil
 }
