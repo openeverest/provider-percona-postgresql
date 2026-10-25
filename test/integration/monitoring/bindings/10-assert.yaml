@@ -1,0 +1,68 @@
+# Core materialises one binding for the entry; it resolves to ProviderManaged
+# and the provider reports it Configured.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringBinding
+metadata:
+  labels:
+    core.openeverest.io/instance: pg-bindings
+    monitoring.openeverest.io/entry: pmm
+  ownerReferences:
+    - apiVersion: core.openeverest.io/v1alpha1
+      kind: Instance
+      name: pg-bindings
+spec:
+  instanceRef:
+    name: pg-bindings
+  destinationRef:
+    name: pmm-it
+  classRef:
+    name: pmm-it
+  executionMode: ProviderManaged
+  parameters:
+    resources:
+      limits:
+        memory: 400Mi
+status:
+  (conditions[?type == 'Accepted'].status | [0]): "True"
+  (conditions[?type == 'Configured'].status | [0]): "True"
+  (conditions[?type == 'Configured'].reason | [0]): Configured
+---
+# spec.pmm comes from the binding: server from the destination URL, image from
+# the class, limits from the entry parameters.
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: pg-bindings
+spec:
+  pmm:
+    enabled: true
+    serverHost: pmm-it.example.com
+    image: percona/pmm-client:3.8.0
+    secret: pg-bindings-pmm-secret
+    customClusterName: pg-bindings
+    imagePullPolicy: IfNotPresent
+    postgresParams: (join('', ['--custom-labels=namespace=', $namespace, ',core_openeverest_io_instance=pg-bindings']))
+    resources:
+      limits:
+        memory: 400Mi
+---
+# The destination token, mirrored where the operator reads it.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-bindings-pmm-secret
+type: Opaque
+data:
+  PMM_SERVER_TOKEN: YWJjZGVm
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-bindings
+status:
+  monitoring:
+    (destinations[?name == 'pmm'] | [0]):
+      mode: ProviderManaged
+      configured: "True"
+      reason: Configured
+  (conditions[?type == 'MonitoringConfigured'].status | [0]): "True"

@@ -30,7 +30,8 @@ permissions:
 
 env:
   IMG: provider-percona-postgresql:ci
-  OPENEVEREST_BRANCH: main
+  # Flips to main once the monitoring changes merge.
+  OPENEVEREST_BRANCH: monitoring/02-controllers
 
 jobs:
   run:
