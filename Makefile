@@ -12,9 +12,8 @@ RELEASE_FULLCOMMIT ?= $(shell git rev-parse HEAD)
 # tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
 
-# OpenEverest branch to use for OpenEverest CRD installation and the
-# controller the integration tests run against. Flips to main once the
-# monitoring changes merge.
+# OpenEverest branch the integration tests build the controller from. Flips
+# to main once the monitoring changes merge.
 OPENEVEREST_BRANCH ?= monitoring/02-controllers
 
 # Image URL to use all building/pushing image targets
@@ -236,16 +235,11 @@ load-openeverest-controller-image: ## Import the OpenEverest controller image in
 	k3d image import ${OPENEVEREST_CONTROLLER_IMG} -c ${K3D_CLUSTER_NAME}
 
 .PHONY: install-crds
-install-crds: ## Install OpenEverest and PG CRDs into the cluster.
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/core.openeverest.io_providers.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/core.openeverest.io_instances.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/monitoring.openeverest.io_monitoringclasses.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/monitoring.openeverest.io_monitoringdestinations.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/monitoring.openeverest.io_monitoringbindings.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backupclasses.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backups.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_restores.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backupstorages.yaml
+install-crds: ## Install the pinned OpenEverest module's CRDs and the PG CRDs into the cluster.
+	go mod download github.com/openeverest/openeverest/v2
+	crds="$$(go list -m -f '{{.Dir}}' github.com/openeverest/openeverest/v2)/config/crd/bases" && \
+		kubectl apply --server-side -f "$$crds" && \
+		kubectl wait --for condition=established --timeout=60s -f "$$crds"
 	curl -fsSL https://raw.githubusercontent.com/percona/percona-postgresql-operator/v$(PG_OPERATOR_VERSION)/deploy/crd.yaml \
 		| kubectl apply --server-side -f -
 
