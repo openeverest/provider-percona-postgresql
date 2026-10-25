@@ -36,7 +36,8 @@ spec:
     limits:
       maxPITREnabledStorages: 1
 ---
-# The pmm class as the monitoring-pmm chart ships it, under a test-local name.
+# The monitoring-pmm chart's pmm class, rendered with its default values and
+# without its display fields and UI hints, under a test-local name.
 apiVersion: monitoring.openeverest.io/v1alpha1
 kind: MonitoringClass
 metadata:
@@ -45,8 +46,9 @@ spec:
   controllerName: openeverest.io/monitoring-pmm
   providerManaged:
     integration: pmm
-    agentImage: percona/pmm-client:3.8.0
-    agentVersion: 3.8.0
+    agentImage: "percona/pmm-client:3.8.0"
+    agentVersion: "3.8.0"
+    features: [queryAnalytics]
   destinationParametersSchema:
     openAPIV3Schema:
       type: object
@@ -55,23 +57,35 @@ spec:
         url:
           type: string
           pattern: '^https?://.+'
+          description: PMM Server URL, for example https://pmm.example.com.
         verifyTLS:
           type: boolean
+          description: Verify the PMM Server TLS certificate. Applies to this controller's readiness probe; the agents' TLS behaviour is the operator's. Defaults to true.
   instanceParametersSchema:
     openAPIV3Schema:
       type: object
       properties:
         resources:
           type: object
+          description: Resource requirements of the pmm-client container.
+          additionalProperties: false
           properties:
             limits:
               type: object
               additionalProperties:
-                type: string
+                anyOf:
+                  - type: integer
+                  - type: string
+                pattern: '^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$'
+                x-kubernetes-int-or-string: true
             requests:
               type: object
               additionalProperties:
-                type: string
+                anyOf:
+                  - type: integer
+                  - type: string
+                pattern: '^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$'
+                x-kubernetes-int-or-string: true
   credentialsSchema:
     required: [apiKey]
 ---

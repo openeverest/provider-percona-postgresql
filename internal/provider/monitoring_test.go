@@ -154,15 +154,18 @@ func TestApplyPMMRendersTheBinding(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
+		entries        []string
 		existingMirror *corev1.Secret
 	}{
-		"creates the token Secret": {},
+		"creates the token Secret": {entries: []string{"pmm"}},
 		"refreshes a stale token": {
+			entries: []string{"pmm"},
 			existingMirror: &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: "orders-pmm-secret", Namespace: pmmTestNamespace},
 				Data:       map[string][]byte{"PMM_SERVER_TOKEN": []byte("glsa_revoked")},
 			},
 		},
+		"next to an entry without a binding": {entries: []string{"pmm", "prometheus"}},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -174,7 +177,7 @@ func TestApplyPMMRendersTheBinding(t *testing.T) {
 			if tt.existingMirror != nil {
 				objs = append(objs, tt.existingMirror)
 			}
-			c, k8s := newPMMTestContext(t, monitoredInstance("pmm"), objs...)
+			c, k8s := newPMMTestContext(t, monitoredInstance(tt.entries...), objs...)
 
 			cluster := &pgv2.PerconaPGCluster{}
 			require.NoError(t, applyPMM(c, cluster))
@@ -293,6 +296,16 @@ func TestApplyPMMReportsRenderFailed(t *testing.T) {
 			},
 			message: `MonitoringClass "pmm" sets no providerManaged.agentImage`,
 		},
+		"undecodable destination parameters": {
+			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
+				d.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"url":42}`)}
+			},
+			message: `decode MonitoringDestination "pmm" parameters`,
+		},
+		"undecodable binding parameters": {
+			bindingParams: `{"resources":{"limits":{"memory":"lots"}}}`,
+			message:       `decode MonitoringBinding "` + monitoring.BindingName(pmmTestInstance, "pmm") + `" parameters`,
+		},
 		"request above its limit": {
 			bindingParams: `{"resources":{"requests":{"cpu":"100m","memory":"500Mi"},"limits":{"cpu":"1","memory":"400Mi"}}}`,
 			message:       `parameters.resources: memory request 500Mi exceeds its limit 400Mi`,
@@ -364,7 +377,7 @@ func TestApplyPMMReturnsAPIErrors(t *testing.T) {
 	}
 }
 
-func TestApplyPMMDisabledWithoutPMMBinding(t *testing.T) {
+func TestApplyPMMDisabledWithoutPMMEntry(t *testing.T) {
 	t.Parallel()
 
 	prometheus := &monitoringv1alpha1.MonitoringClass{
@@ -393,6 +406,12 @@ func TestApplyPMMDisabledWithoutPMMBinding(t *testing.T) {
 		"only an ExtensionManaged destination": {
 			in:         monitoredInstance("prometheus"),
 			objs:       []client.Object{prometheus, acceptedBinding("prometheus", "prometheus", corev1alpha1.MonitoringExecutionModeExtensionManaged)},
+			live:       liveCluster(),
+			mirrorKept: true,
+		},
+		"pmm entry removed while its binding exists": {
+			in:         monitoredInstance(),
+			objs:       []client.Object{pmmClass(), pmmDestination(), pmmTokenSecret(), acceptedBinding("pmm", "pmm", corev1alpha1.MonitoringExecutionModeProviderManaged)},
 			live:       liveCluster(),
 			mirrorKept: true,
 		},
