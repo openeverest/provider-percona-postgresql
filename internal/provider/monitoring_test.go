@@ -107,7 +107,6 @@ func pmmClass() *monitoringv1alpha1.MonitoringClass {
 	return &monitoringv1alpha1.MonitoringClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "pmm"},
 		Spec: monitoringv1alpha1.MonitoringClassSpec{
-			ControllerName: "openeverest.io/monitoring-pmm",
 			ProviderManaged: &monitoringv1alpha1.ProviderManagedFulfilment{
 				Integration:  "pmm",
 				AgentImage:   "percona/pmm-client:3.8.0",
@@ -383,7 +382,6 @@ func TestApplyPMMDisabledWithoutPMMEntry(t *testing.T) {
 	prometheus := &monitoringv1alpha1.MonitoringClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "prometheus"},
 		Spec: monitoringv1alpha1.MonitoringClassSpec{
-			ControllerName: "openeverest.io/monitoring-prometheus",
 			ExtensionManaged: &monitoringv1alpha1.ExtensionManagedFulfilment{
 				Requires: monitoringv1alpha1.SourceRequirements{Metrics: true},
 			},
