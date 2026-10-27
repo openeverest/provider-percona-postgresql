@@ -1,93 +1,162 @@
 package provider
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
-	"strings"
+	"slices"
 
-	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
-	"github.com/openeverest/provider-percona-postgresql/definition/components"
-	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
-	monitoringConfigRefFieldPath = "spec.components.monitoring.parameters.monitoringConfigName"
-	monitoringConfigAPIKeyKey    = "apiKey"
-	pgPMMServerToken             = "PMM_SERVER_TOKEN"
+	// pmmIntegration is the integration declared in definition/monitoring.yaml.
+	pmmIntegration         = "pmm"
+	pmmDestinationTokenKey = "apiKey"
+	pgPMMServerToken       = "PMM_SERVER_TOKEN"
+	pmmSecretSuffix        = "-pmm-secret"
 )
 
-func applyMonitoringSettings(c *controller.Context, cluster *pgv2.PerconaPGCluster, providerSpec *corev1alpha1.ProviderSpec) error {
-	monitoringComponent, ok := c.Instance().Spec.Components[common.ComponentMonitoring]
-	if !ok {
-		cluster.Spec.PMM = nil
-		return nil
-	}
-	monitoringType := monitoringComponent.Type
-	if monitoringType == "" {
-		monitoringType = common.MonitoringTypePMM
-	}
+// MonitoringIntegrations implements controller.MonitoringIntegrationsProvider.
+func (p *Provider) MonitoringIntegrations() []string {
+	return []string{pmmIntegration}
+}
 
-	if monitoringType != common.MonitoringTypePMM {
-		return fmt.Errorf("unsupported monitoring component type %q", monitoringComponent.Type)
-	}
+var _ controller.MonitoringIntegrationsProvider = (*Provider)(nil)
 
-	monitoringConfigName, err := monitoringConfigNameFromComponent(monitoringComponent)
+// pmmDestinationParameters is MonitoringDestination.spec.parameters of the
+// pmm class.
+type pmmDestinationParameters struct {
+	URL string `json:"url"`
+}
+
+// pmmInstanceParameters is Instance.spec.monitoring.destinations[].parameters
+// of the pmm class.
+type pmmInstanceParameters struct {
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// renderFailedError marks inputs the binding cannot be rendered from. It is
+// reported on the binding; any other error fails Sync and is retried.
+type renderFailedError struct{ error }
+
+func renderFailed(format string, args ...any) error {
+	return renderFailedError{fmt.Errorf(format, args...)}
+}
+
+// applyPMM renders spec.pmm from the Instance's pmm binding while one
+// requires it and disables it once none does, deleting the token Secret once
+// the live cluster has PMM off. Otherwise, and when the binding cannot be
+// rendered, it keeps what the live cluster runs; a render failure is reported
+// on the binding and never fails Sync.
+func applyPMM(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
+	req, err := c.RequiredSources()
 	if err != nil {
 		return err
 	}
-	if monitoringConfigName == "" {
+	live := &pgv2.PerconaPGCluster{}
+	if err := c.Get(live, c.Name()); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("get PerconaPGCluster %q: %w", c.Name(), err)
+	}
+
+	pmm := req.Integrations[pmmIntegration]
+	if !pmm.Else(live.PMMEnabled()) {
 		cluster.Spec.PMM = nil
+		if pmm == controller.NotRequired && !live.PMMEnabled() {
+			return deletePMMSecret(c)
+		}
+		return nil
+	}
+	cluster.Spec.PMM = live.Spec.PMM.DeepCopy()
+	if pmm != controller.Required {
 		return nil
 	}
 
-	monitoringCfg := &monitoringv1alpha1.MonitoringConfig{}
-	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: c.Namespace(), Name: monitoringConfigName}, monitoringCfg); err != nil {
-		return fmt.Errorf("get MonitoringConfig %q: %w", monitoringConfigName, err)
-	}
-	if monitoringCfg.Spec.Type != monitoringv1alpha1.PMMMonitoringType || monitoringCfg.Spec.PMM == nil {
-		return fmt.Errorf("MonitoringConfig %q must be type %q", monitoringConfigName, monitoringv1alpha1.PMMMonitoringType)
-	}
-	if monitoringCfg.Spec.PMM.CredentialsSecretRef.Name == "" {
-		return fmt.Errorf("MonitoringConfig %q must set spec.pmm.credentialsSecretRef.name", monitoringConfigName)
-	}
-
-	serverHost, err := pmmServerHostFromURL(monitoringCfg.Spec.PMM.URL)
+	bindings, err := c.MonitoringBindings()
 	if err != nil {
-		return fmt.Errorf("resolve PMM server host from MonitoringConfig %q URL: %w", monitoringConfigName, err)
-	}
-
-	pmmImage := monitoringImageForComponent(c, providerSpec, monitoringType, monitoringComponent)
-	if pmmImage == "" {
-		return fmt.Errorf("cannot resolve PMM image for component %q", common.ComponentMonitoring)
-	}
-
-	pmmSecretName := c.Name() + "-pmm-secret"
-	if err := syncPMMCredentials(c, monitoringCfg.Spec.PMM.CredentialsSecretRef.Name, pmmSecretName); err != nil {
 		return err
 	}
+	for _, rb := range bindings {
+		if !rb.Apply || rb.Integration() != pmmIntegration {
+			continue
+		}
+		spec, err := renderPMM(c, rb)
+		if _, ok := errors.AsType[renderFailedError](err); ok {
+			log.FromContext(c.Context()).Error(err, "PMM binding could not be rendered", "binding", rb.Binding.Name)
+			c.SetMonitoringBindingResult(rb.Binding.Name, monitoringv1alpha1.ReasonRenderFailed, err.Error())
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		cluster.Spec.PMM = spec
+		return nil
+	}
+	return nil
+}
 
-	cluster.Spec.PMM = &pgv2.PMMSpec{
+// renderPMM builds spec.pmm for an Apply-able pmm binding and mirrors the
+// destination's token into the Secret the operator reads it from.
+func renderPMM(c *controller.Context, rb controller.ResolvedBinding) (*pgv2.PMMSpec, error) {
+	dst := pmmDestinationParameters{}
+	if rb.Destination.Spec.Parameters != nil {
+		if err := json.Unmarshal(rb.Destination.Spec.Parameters.Raw, &dst); err != nil {
+			return nil, renderFailed("decode MonitoringDestination %q parameters: %w", rb.Destination.Name, err)
+		}
+	}
+	u, err := url.Parse(dst.URL)
+	if err != nil || u.Host == "" {
+		return nil, renderFailed("MonitoringDestination %q parameters.url %q is not an absolute URL", rb.Destination.Name, dst.URL)
+	}
+	if rb.Destination.Spec.CredentialsSecretRef == nil {
+		return nil, renderFailed("MonitoringDestination %q sets no credentialsSecretRef", rb.Destination.Name)
+	}
+	image := rb.Class.Spec.ProviderManaged.AgentImage
+	if image == "" {
+		return nil, renderFailed("MonitoringClass %q sets no providerManaged.agentImage", rb.Class.Name)
+	}
+	params := pmmInstanceParameters{}
+	if rb.Binding.Spec.Parameters != nil {
+		if err := json.Unmarshal(rb.Binding.Spec.Parameters.Raw, &params); err != nil {
+			return nil, renderFailed("decode MonitoringBinding %q parameters: %w", rb.Binding.Name, err)
+		}
+	}
+	if r := params.Resources; r != nil {
+		for _, name := range slices.Sorted(maps.Keys(r.Requests)) {
+			request := r.Requests[name]
+			if limit, ok := r.Limits[name]; ok && request.Cmp(limit) > 0 {
+				return nil, renderFailed("MonitoringBinding %q parameters.resources: %s request %s exceeds its limit %s", rb.Binding.Name, name, request.String(), limit.String())
+			}
+		}
+	}
+
+	pmmSecretName := c.Name() + pmmSecretSuffix
+	if err := mirrorPMMToken(c, rb.Destination.Spec.CredentialsSecretRef.Name, pmmSecretName); err != nil {
+		return nil, err
+	}
+
+	spec := &pgv2.PMMSpec{
 		Enabled:           true,
-		ServerHost:        serverHost,
-		Image:             pmmImage,
+		ServerHost:        u.Host,
+		Image:             image,
 		Secret:            pmmSecretName,
 		CustomClusterName: c.Name(),
 		PostgresParams:    pmmAdminParams(c),
 		ImagePullPolicy:   corev1.PullIfNotPresent,
 	}
-	if monitoringComponent.Resources != nil {
-		cluster.Spec.PMM.Resources = *monitoringComponent.Resources
+	if params.Resources != nil {
+		spec.Resources = *params.Resources
 	}
-	return nil
+	return spec, nil
 }
 
 // pmmAdminParams returns the pmm-admin flags that label the instance's metrics
@@ -109,111 +178,38 @@ func prometheusLabelName(key string) string {
 	return invalidPrometheusLabelChars.ReplaceAllString(key, "_")
 }
 
-func monitoringConfigNameFromComponent(component corev1alpha1.ComponentSpec) (string, error) {
-	if component.Parameters == nil || len(component.Parameters.Raw) == 0 {
-		return "", nil
-	}
-
-	cfg := &components.PmmParameters{}
-	if err := json.Unmarshal(component.Parameters.Raw, cfg); err != nil {
-		return "", fmt.Errorf("decode monitoring component parameters: %w", err)
-	}
-	if cfg.MonitoringConfigName == nil {
-		return "", nil
-	}
-
-	return *cfg.MonitoringConfigName, nil
-}
-
-func pmmServerHostFromURL(rawURL string) (string, error) {
-	if rawURL == "" {
-		return "", fmt.Errorf("url is empty")
-	}
-	if !strings.Contains(rawURL, "://") {
-		return strings.TrimSuffix(rawURL, "/"), nil
-	}
-
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", err
-	}
-	if u.Host == "" {
-		return "", fmt.Errorf("missing host")
-	}
-	return u.Host, nil
-}
-
-func syncPMMCredentials(c *controller.Context, credentialsSecretName, pmmSecretName string) error {
+// mirrorPMMToken applies the destination token to the Secret the operator
+// reads it from, owned by the Instance so it is deleted with it.
+func mirrorPMMToken(c *controller.Context, credentialsSecretName, pmmSecretName string) error {
 	credentialsSecret := &corev1.Secret{}
-	if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: c.Namespace(), Name: credentialsSecretName}, credentialsSecret); err != nil {
+	if err := c.Get(credentialsSecret, credentialsSecretName); err != nil {
+		if apierrors.IsNotFound(err) {
+			return renderFailed("get PMM credentials Secret %q: %w", credentialsSecretName, err)
+		}
 		return fmt.Errorf("get PMM credentials Secret %q: %w", credentialsSecretName, err)
 	}
-	apiKey, ok := credentialsSecret.Data[monitoringConfigAPIKeyKey]
+	apiKey, ok := credentialsSecret.Data[pmmDestinationTokenKey]
 	if !ok || len(apiKey) == 0 {
-		return fmt.Errorf("PMM credentials Secret %q must contain non-empty %q key", credentialsSecretName, monitoringConfigAPIKeyKey)
+		return renderFailed("PMM credentials Secret %q must contain non-empty %q key", credentialsSecretName, pmmDestinationTokenKey)
 	}
 
-	pmmSecret := &corev1.Secret{}
-	err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: c.Namespace(), Name: pmmSecretName}, pmmSecret)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			pmmSecret = &corev1.Secret{}
-			pmmSecret.Name = pmmSecretName
-			pmmSecret.Namespace = c.Namespace()
-			pmmSecret.Data = map[string][]byte{
-				pgPMMServerToken: append([]byte(nil), apiKey...),
-			}
-			if err := c.Client().Create(c.Context(), pmmSecret); err != nil {
-				return fmt.Errorf("create PMM secret %q: %w", pmmSecretName, err)
-			}
-			return nil
-		}
-		return fmt.Errorf("get PMM Secret %q: %w", pmmSecretName, err)
+	if err := c.Apply(&corev1.Secret{
+		ObjectMeta: c.ObjectMeta(pmmSecretName),
+		Data:       map[string][]byte{pgPMMServerToken: apiKey},
+	}); err != nil {
+		return fmt.Errorf("apply PMM Secret %q: %w", pmmSecretName, err)
 	}
-
-	if pmmSecret.Data != nil && bytes.Equal(pmmSecret.Data[pgPMMServerToken], apiKey) {
-		return nil
-	}
-
-	orig := pmmSecret.DeepCopy()
-	if pmmSecret.Data == nil {
-		pmmSecret.Data = map[string][]byte{}
-	}
-	pmmSecret.Data[pgPMMServerToken] = append([]byte(nil), apiKey...)
-
-	if err := c.Client().Patch(c.Context(), pmmSecret, client.MergeFrom(orig)); err != nil {
-		return fmt.Errorf("sync PMM credentials to Secret %q: %w", pmmSecretName, err)
-	}
-
 	return nil
 }
 
-func monitoringImageForComponent(c *controller.Context, providerSpec *corev1alpha1.ProviderSpec, monitoringType string, component corev1alpha1.ComponentSpec) string {
-	if component.Image != "" {
-		return component.Image
+func deletePMMSecret(c *controller.Context) error {
+	secret := &corev1.Secret{}
+	exists, err := c.Exists(secret, c.Name()+pmmSecretSuffix)
+	if err != nil || !exists {
+		return err
 	}
-	if component.Version != "" {
-		if image := controller.GetImageForVersion(providerSpec, common.ComponentMonitoring, component.Version); image != "" {
-			return image
-		}
+	if err := c.Delete(secret); err != nil {
+		return fmt.Errorf("delete PMM Secret %q: %w", secret.Name, err)
 	}
-
-	selectedBundle := c.Instance().Spec.Version
-	if selectedBundle == "" {
-		selectedBundle = c.Instance().Status.Version
-	}
-	if selectedBundle == "" {
-		selectedBundle = controller.GetDefaultVersionBundleName(providerSpec)
-	}
-	if selectedBundle != "" {
-		if bundle, err := controller.ResolveVersionBundle(providerSpec, selectedBundle); err == nil {
-			if version, ok := bundle.Components[common.ComponentMonitoring]; ok {
-				if image := controller.GetImageForVersion(providerSpec, common.ComponentMonitoring, version); image != "" {
-					return image
-				}
-			}
-		}
-	}
-
-	return controller.GetDefaultImage(providerSpec, monitoringType)
+	return nil
 }

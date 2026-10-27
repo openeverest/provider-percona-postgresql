@@ -1,0 +1,34 @@
+# The destination is gone: core revokes Accepted and the provider keeps the
+# live rendering until the entry is dropped.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringBinding
+metadata:
+  labels:
+    core.openeverest.io/instance: pg-bindings
+    monitoring.openeverest.io/entry: pmm
+status:
+  (conditions[?type == 'Accepted'].status | [0]): "False"
+  (conditions[?type == 'Accepted'].reason | [0]): DestinationNotFound
+  (conditions[?type == 'Configured'].reason | [0]): Retained
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: pg-bindings
+spec:
+  pmm:
+    enabled: true
+    serverHost: pmm-it.example.com
+    image: percona/pmm-client:3.8.0
+    secret: pg-bindings-pmm-secret
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-bindings
+status:
+  monitoring:
+    (destinations[?name == 'pmm'] | [0]):
+      configured: "False"
+      reason: DestinationNotFound
+  (conditions[?type == 'MonitoringConfigured'].status | [0]): "False"

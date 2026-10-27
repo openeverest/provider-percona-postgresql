@@ -1,0 +1,17 @@
+# With the entry gone, PMM is disabled and the Instance reports no monitoring.
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: pg-bindings
+spec:
+  (pmm == null): true
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-bindings
+spec:
+  (monitoring == null): true
+status:
+  (monitoring == null): true
+  (length(conditions[?type == 'MonitoringConfigured'])): 0

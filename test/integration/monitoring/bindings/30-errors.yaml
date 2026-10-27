@@ -1,0 +1,12 @@
+# The binding goes with its entry.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringBinding
+metadata:
+  labels:
+    core.openeverest.io/instance: pg-bindings
+---
+# The token Secret goes once the cluster has PMM off.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-bindings-pmm-secret

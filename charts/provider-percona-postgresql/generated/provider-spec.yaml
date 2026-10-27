@@ -20,11 +20,6 @@ spec:
           version: 1.25.1-1
         - image: percona/percona-pgbouncer:1.25.2-1
           version: 1.25.2-1
-    pmm:
-      defaultVersion: 3.7.1
-      versions:
-        - image: percona/pmm-client:3.7.1
-          version: 3.7.1
     postgresql:
       defaultVersion: 18.4-1
       versions:
@@ -67,25 +62,19 @@ spec:
               type: string
           type: object
       type: postgresql
-    monitoring:
-      parametersSchema:
-        openAPIV3Schema:
-          properties:
-            monitoringConfigName:
-              type: string
-          type: object
-      type: pmm
     proxy:
       type: pgbouncer
   defaultVersion: 18.4-1
+  monitoring:
+    integrations:
+      pmm:
+        agentVersions: '>=3.0.0 <4.0.0'
   release:
     version: 0.4.0
   topologies:
     cluster:
       components:
         engine: {}
-        monitoring:
-          optional: true
         proxy: {}
       parametersSchema:
         openAPIV3Schema:
@@ -119,7 +108,7 @@ spec:
               componentsOrder:
                 - policy
               description: Control how database pods are scheduled onto nodes using affinity rules.
-              groupType: toggleable
+              groupType: bordered
               label: Pod scheduling policy
               uiType: group
           componentsOrder:
@@ -148,18 +137,6 @@ spec:
                 required: true
           description: Provide the database version for your new database.
           label: Database Version
-        monitoring:
-          components:
-            monitoring:
-              dataSource:
-                provider: monitoringConfigs
-              fieldParams:
-                displayEmpty: true
-                label: Monitoring endpoint
-              path: spec.components.monitoring.parameters.monitoringConfigName
-              uiType: select
-          description: Attach a MonitoringConfig to collect metrics.
-          label: Monitoring
         proxy:
           components:
             proxyLimits:
@@ -321,81 +298,65 @@ spec:
         - databaseVersion
         - resources
         - proxy
-        - monitoring
         - advanced
   versions:
     - components:
         engine: 18.4-1
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 18.4-1
     - components:
         engine: 14.20-2
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 14.20-2
     - components:
         engine: 14.22-1
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 14.22-1
     - components:
         engine: 14.23-1
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 14.23-1
     - components:
         engine: 15.15-2
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 15.15-2
     - components:
         engine: 15.17-1
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 15.17-1
     - components:
         engine: 15.18-1
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 15.18-1
     - components:
         engine: 16.11-2
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 16.11-2
     - components:
         engine: 16.13-1
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 16.13-1
     - components:
         engine: 16.14-1
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 16.14-1
     - components:
         engine: 17.7-2
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 17.7-2
     - components:
         engine: 17.9-1
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 17.9-1
     - components:
         engine: 17.10-1
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 17.10-1
     - components:
         engine: 18.1-3
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 18.1-3
     - components:
         engine: 18.3-1
-        monitoring: 3.7.1
         proxy: 1.25.2-1
       name: 18.3-1

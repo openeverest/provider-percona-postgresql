@@ -19,6 +19,11 @@ spec:
           - name: full
             enabled: true
             cron: "0 2 * * *"
+  monitoring:
+    destinations:
+      - name: pmm
+        destinationRef:
+          name: pmm
   topology:
     type: cluster
   components:
@@ -34,10 +39,6 @@ spec:
         requests:
           cpu: 300m
           memory: 256Mi
-    monitoring:
-      type: pmm
-      parameters:
-        monitoringConfigName: mc-pmm
     proxy:
       type: pgbouncer
       replicas: 1

@@ -1,7 +1,7 @@
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
-  name: test-pg-cluster
+  name: pg-bindings
 spec:
   providerRef:
     name: provider-percona-postgresql
@@ -9,17 +9,15 @@ spec:
     engine:
       type: postgresql
       replicas: 3
-      resources:
-        limits:
-          cpu: "1"
-          memory: 4G
-        requests:
-          cpu: 500m
-          memory: 2G
-      storage:
-        size: 25Gi
-        storageClass: standard
     proxy:
       type: pgbouncer
       replicas: 1
-    monitoring:
+  monitoring:
+    destinations:
+      - name: pmm
+        destinationRef:
+          name: pmm-it
+        parameters:
+          resources:
+            limits:
+              memory: 400Mi

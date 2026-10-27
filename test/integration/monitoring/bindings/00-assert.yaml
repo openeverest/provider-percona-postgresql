@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provider-percona-postgresql-pg-operator
+  namespace: provider-system
+spec:
+  replicas: 0
+---
+# Core accepts the destination against its claimed class.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringDestination
+metadata:
+  name: pmm-it
+status:
+  (conditions[?type == 'Accepted'].status | [0]): "True"

@@ -8,7 +8,4 @@ components:
         parametersSchema: PostgresqlParameters
     proxy:
         type: pgbouncer
-    monitoring:
-        type: pmm
-        parametersSchema: PmmParameters
 name: provider-percona-postgresql

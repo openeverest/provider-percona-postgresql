@@ -1,0 +1,6 @@
+# Monitoring contract, published as Provider.spec.monitoring.
+# Run `make generate` after making changes.
+
+integrations:
+    pmm:
+        agentVersions: ">=3.0.0 <4.0.0"

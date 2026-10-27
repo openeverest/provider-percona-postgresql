@@ -1,0 +1,72 @@
+---
+# The monitoring-pmm chart's pmm class, rendered with its default values and
+# without its display fields and UI hints, under a test-local name.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringClass
+metadata:
+  name: pmm-it
+spec:
+  providerManaged:
+    integration: pmm
+    agentImage: "percona/pmm-client:3.8.0"
+    agentVersion: "3.8.0"
+  destinationParametersSchema:
+    openAPIV3Schema:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          pattern: '^https?://.+'
+          description: PMM Server URL, for example https://pmm.example.com.
+        verifyTLS:
+          type: boolean
+          description: Verify the PMM Server TLS certificate. Applies to this controller's readiness probe; the agents' TLS behaviour is the operator's. Defaults to true.
+  instanceParametersSchema:
+    openAPIV3Schema:
+      type: object
+      properties:
+        resources:
+          type: object
+          description: Resource requirements of the pmm-client container.
+          additionalProperties: false
+          properties:
+            limits:
+              type: object
+              additionalProperties:
+                anyOf:
+                  - type: integer
+                  - type: string
+                pattern: '^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$'
+                x-kubernetes-int-or-string: true
+            requests:
+              type: object
+              additionalProperties:
+                anyOf:
+                  - type: integer
+                  - type: string
+                pattern: '^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$'
+                x-kubernetes-int-or-string: true
+  credentialsSchema:
+    required: [apiKey]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pmm-it-token
+type: Opaque
+data:
+  apiKey: YWJjZGVm
+---
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringDestination
+metadata:
+  name: pmm-it
+spec:
+  classRef:
+    name: pmm-it
+  credentialsSecretRef:
+    name: pmm-it-token
+  parameters:
+    url: http://pmm-it.example.com
+    verifyTLS: false

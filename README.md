@@ -67,7 +67,7 @@ provider itself is covered under [Installation](#installation).
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.<name>.resources` |
 | Version upgrades | ✅ | of the deployed PostgreSQL version — change `spec.version`; see [Versions](#versions) |
 | Custom configuration | ✅ | `spec.components.engine.parameters.configuration` — see [Custom PostgreSQL configuration](#custom-postgresql-configuration) |
-| Monitoring | ✅ | PMM, via `spec.components.monitoring` referencing a `MonitoringConfig` |
+| Monitoring | ✅ | PMM 3, via a `spec.monitoring.destinations` entry naming a `MonitoringDestination` of a `pmm` class |
 | TLS | ⚠️ | the operator provisions certificates; nothing is exposed through the Instance API |
 
 Stateful workloads additionally report:
@@ -203,8 +203,8 @@ This provider currently exposes one technology-specific parameter beyond the sha
 component fields (replicas, resources, storage): `engine.parameters.configuration`,
 covered in [Custom PostgreSQL configuration](#custom-postgresql-configuration).
 
-With `monitoring` enabled, the instance's PostgreSQL metrics in PMM carry `namespace` and
-`core_openeverest_io_instance` labels, so they can be queried per instance.
+When the instance sends to a PMM destination, its PostgreSQL metrics in PMM carry `namespace`
+and `core_openeverest_io_instance` labels, so they can be queried per instance.
 
 ## Development
 
