@@ -12,9 +12,8 @@ RELEASE_FULLCOMMIT ?= $(shell git rev-parse HEAD)
 # tools. (i.e. podman)
 CONTAINER_TOOL ?= docker
 
-# OpenEverest branch the integration tests build the controller from. Flips
-# to main once the monitoring changes merge.
-OPENEVEREST_BRANCH ?= monitoring/02-controllers
+# OpenEverest branch the integration tests build the controller from.
+OPENEVEREST_BRANCH ?= main
 
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/openeverest/provider-percona-postgresql-dev:latest

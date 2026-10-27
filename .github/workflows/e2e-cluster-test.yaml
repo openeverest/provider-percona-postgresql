@@ -21,9 +21,8 @@ permissions:
 
 env:
   IMG: provider-percona-postgresql:ci
-  # Branch of openeverest/openeverest to build the platform from. Flips to
-  # main once the monitoring changes merge.
-  OPENEVEREST_BRANCH: monitoring/02-controllers
+  # Branch of openeverest/openeverest to build the platform from.
+  OPENEVEREST_BRANCH: main
 
 jobs:
   run:
