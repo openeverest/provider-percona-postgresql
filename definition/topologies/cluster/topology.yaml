@@ -152,25 +152,6 @@ ui:
                 min: 1
                 int: true
                 required: true
-            proxyExposure:
-              uiType: select
-              path: spec.components.proxy.service.serviceType
-              fieldParams:
-                label: "Exposure"
-                helperText: "How clients reach PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster."
-                defaultValue: "ClusterIP"
-                options:
-                  - label: "ClusterIP"
-                    value: "ClusterIP"
-                  - label: "LoadBalancer"
-                    value: "LoadBalancer"
-                  - label: "NodePort"
-                    value: "NodePort"
-                # TODO: Support Service annotations and LoadBalancer source ranges
-                # https://github.com/openeverest/openeverest/issues/1959
-                # https://github.com/openeverest/openeverest/issues/2398
-              validation:
-                required: true
             proxyLimits:
               uiType: group
               groupType: line
@@ -239,12 +220,31 @@ ui:
                     - memory
               componentsOrder:
                 - requests
+            proxyExposure:
+              uiType: select
+              path: spec.components.proxy.service.serviceType
+              fieldParams:
+                label: "Exposure"
+                helperText: "How clients reach PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster."
+                defaultValue: "ClusterIP"
+                options:
+                  - label: "ClusterIP"
+                    value: "ClusterIP"
+                  - label: "LoadBalancer"
+                    value: "LoadBalancer"
+                  - label: "NodePort"
+                    value: "NodePort"
+                # TODO: Support Service annotations and LoadBalancer source ranges
+                # https://github.com/openeverest/openeverest/issues/1959
+                # https://github.com/openeverest/openeverest/issues/2398
+              validation:
+                required: true
           componentsOrder:
             - proxyType
             - proxyNodes
-            - proxyExposure
             - proxyLimits
             - proxyRequests
+            - proxyExposure
         advanced:
             label: Advanced Configuration
             description: Fine-tune PostgreSQL by overriding its default configuration parameters.

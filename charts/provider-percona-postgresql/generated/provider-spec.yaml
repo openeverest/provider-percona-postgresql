@@ -244,9 +244,9 @@ spec:
           componentsOrder:
             - proxyType
             - proxyNodes
-            - proxyExposure
             - proxyLimits
             - proxyRequests
+            - proxyExposure
           description: Configure a single proxy type for the cluster.
           label: Proxy
         resources:
