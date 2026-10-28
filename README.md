@@ -67,6 +67,7 @@ provider itself is covered under [Installation](#installation).
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.<name>.resources` |
 | Version upgrades | ✅ | of the deployed PostgreSQL version — change `spec.version`; see [Versions](#versions) |
 | Custom configuration | ✅ | `spec.components.engine.parameters.configuration` — see [Custom PostgreSQL configuration](#custom-postgresql-configuration) |
+| Exposure | ✅ | `spec.components.proxy.service.serviceType`: `ClusterIP` (default), `LoadBalancer` or `NodePort`; applies to pgBouncer, so it needs `proxy.replicas` ≥ 1 |
 | Monitoring | ✅ | PMM 3, via a `spec.monitoring.destinations` entry naming a `MonitoringDestination` of a `pmm` class |
 | TLS | ⚠️ | the operator provisions certificates; nothing is exposed through the Instance API |
 
