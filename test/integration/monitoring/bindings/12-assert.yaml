@@ -1,0 +1,44 @@
+# The victoriametrics entry resolves to ExtensionManaged like the prometheus
+# entry it replaces.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringBinding
+metadata:
+  labels:
+    core.openeverest.io/instance: pg-bindings
+    monitoring.openeverest.io/entry: victoriametrics
+spec:
+  destinationRef:
+    name: victoriametrics-it
+  classRef:
+    name: victoriametrics-it
+  executionMode: ExtensionManaged
+status:
+  (conditions[?type == 'Accepted'].status | [0]): "True"
+---
+# Both classes require metrics: the exporters stay, so the pods do not roll.
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: pg-bindings
+spec:
+  instances:
+    - name: instance1
+      sidecars:
+        - name: postgres-exporter
+  proxy:
+    pgBouncer:
+      sidecars:
+        - name: pgbouncer-exporter
+---
+# The published endpoints are the ones the prometheus entry was scraping.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-bindings
+status:
+  monitoring:
+    (length(destinations)): 2
+    (destinations[?name == 'victoriametrics'] | [0]):
+      mode: ExtensionManaged
+    sources:
+      (metrics[*].component): [engine, proxy]

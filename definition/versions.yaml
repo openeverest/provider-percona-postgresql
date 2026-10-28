@@ -54,6 +54,18 @@ componentTypes:
               version: 2.58.0-1
             - image: percona/percona-pgbackrest:2.58.0-2
               version: 2.58.0-2
+    # Metrics exporters, run as sidecars only while a monitoring class bound
+    # to the Instance requires metrics (see definition/monitoring.yaml).
+    postgresExporter:
+        defaultVersion: "0.20.1"
+        versions:
+            - image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+              version: "0.20.1"
+    pgbouncerExporter:
+        defaultVersion: "0.12.1"
+        versions:
+            - image: quay.io/prometheuscommunity/pgbouncer-exporter:v0.12.1
+              version: "0.12.1"
 
 # Version bundles used by UI (spec.version) and runtime component selection.
 defaultVersion: "18.4-1"

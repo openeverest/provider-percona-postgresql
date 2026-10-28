@@ -1,0 +1,23 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-bindings
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  components:
+    engine:
+      type: postgresql
+      replicas: 3
+    proxy:
+      type: pgbouncer
+      replicas: 1
+  monitoring:
+    destinations:
+      - name: pmm
+        destinationRef:
+          name: pmm-it
+        parameters:
+          resources:
+            limits:
+              memory: 400Mi
