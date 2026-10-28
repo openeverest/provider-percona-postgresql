@@ -1,0 +1,28 @@
+# Nothing requires metrics any more: the exporters, their login and the
+# PgBouncer settings go, PMM stays.
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: pg-bindings
+spec:
+  pmm:
+    enabled: true
+    serverHost: pmm-it.example.com
+  instances:
+    - name: instance1
+      (sidecars == null): true
+  proxy:
+    pgBouncer:
+      (sidecars == null): true
+      (config.global == null): true
+  (users[*].name): [postgres]
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-bindings
+status:
+  monitoring:
+    (length(destinations)): 1
+    (destinations[0].name): pmm
+    (sources.metrics == null): true

@@ -50,6 +50,42 @@ spec:
   credentialsSchema:
     required: [apiKey]
 ---
+# A minimal prometheus class, under a test-local name.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringClass
+metadata:
+  name: prometheus-it
+spec:
+  extensionManaged:
+    requires:
+      metrics: true
+  destinationParametersSchema:
+    openAPIV3Schema:
+      type: object
+      properties:
+        podMonitorLabels:
+          type: object
+          additionalProperties:
+            type: string
+---
+# A minimal victoriametrics class, under a test-local name.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringClass
+metadata:
+  name: victoriametrics-it
+spec:
+  extensionManaged:
+    requires:
+      metrics: true
+  destinationParametersSchema:
+    openAPIV3Schema:
+      type: object
+      properties:
+        vmPodScrapeLabels:
+          type: object
+          additionalProperties:
+            type: string
+---
 apiVersion: v1
 kind: Secret
 metadata:
@@ -70,3 +106,25 @@ spec:
   parameters:
     url: http://pmm-it.example.com
     verifyTLS: false
+---
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringDestination
+metadata:
+  name: prometheus-it
+spec:
+  classRef:
+    name: prometheus-it
+  parameters:
+    podMonitorLabels:
+      release: kps
+---
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringDestination
+metadata:
+  name: victoriametrics-it
+spec:
+  classRef:
+    name: victoriametrics-it
+  parameters:
+    vmPodScrapeLabels:
+      release: vm

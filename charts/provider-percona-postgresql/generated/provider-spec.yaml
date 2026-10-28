@@ -20,6 +20,16 @@ spec:
           version: 1.25.1-1
         - image: percona/percona-pgbouncer:1.25.2-1
           version: 1.25.2-1
+    pgbouncerExporter:
+      defaultVersion: 0.12.1
+      versions:
+        - image: quay.io/prometheuscommunity/pgbouncer-exporter:v0.12.1
+          version: 0.12.1
+    postgresExporter:
+      defaultVersion: 0.20.1
+      versions:
+        - image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+          version: 0.20.1
     postgresql:
       defaultVersion: 18.4-1
       versions:
@@ -66,6 +76,13 @@ spec:
       type: pgbouncer
   defaultVersion: 18.4-1
   monitoring:
+    componentTypes:
+      pgbouncer:
+        kind: pgbouncer
+        metrics: Exporter
+      postgresql:
+        kind: postgresql
+        metrics: Exporter
     integrations:
       pmm:
         agentVersions: '>=3.0.0 <4.0.0'
