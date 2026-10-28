@@ -13,7 +13,7 @@ config:
     components:
         engine:
             type: postgresql
-            replicas: 3
+            replicas: 2
         proxy:
             type: pgbouncer
             replicas: 2

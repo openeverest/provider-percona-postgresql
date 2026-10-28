@@ -70,7 +70,7 @@ spec:
       pmm:
         agentVersions: '>=3.0.0 <4.0.0'
   release:
-    version: 0.4.0
+    version: 0.6.0
   topologies:
     cluster:
       components:

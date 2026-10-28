@@ -88,7 +88,7 @@ The provider chart is published as an OCI artifact to GitHub Container Registry:
 ```bash
 helm install provider-percona-postgresql \
   oci://ghcr.io/openeverest/charts/provider-percona-postgresql \
-  --version 0.4.0 \
+  --version 0.6.0 \
   --namespace everest-system
 ```
 
@@ -102,7 +102,7 @@ Upgrade and uninstall:
 
 ```bash
 helm upgrade provider-percona-postgresql \
-  oci://ghcr.io/openeverest/charts/provider-percona-postgresql --version 0.4.0
+  oci://ghcr.io/openeverest/charts/provider-percona-postgresql --version 0.6.0
 helm uninstall provider-percona-postgresql --namespace everest-system
 ```
 
@@ -161,7 +161,7 @@ Connection details are in the Secret named by `.status.connectionSecretRef.name`
 <!-- BEGIN GENERATED: topologies -->
 | Topology | Default | Description |
 |---|---|---|
-| `cluster` | ✅ | Primary plus replicas (3 `engine` instances by default), fronted by 2 pgBouncer `proxy` replicas |
+| `cluster` | ✅ | Primary plus replicas (2 `engine` instances by default), fronted by 2 pgBouncer `proxy` replicas |
 <!-- END GENERATED: topologies -->
 
 ## Versions
