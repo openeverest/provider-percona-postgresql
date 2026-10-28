@@ -83,31 +83,43 @@ ui:
                                 message: "Invalid memory value. Use a number followed by a unit: Ki, Mi, Gi, Ti, Pi, or Ei (e.g. 128Mi, 1Gi). A unit is required."
                     groupType: line
                     uiType: group
+                # TODO: switch to groupType: collapsible with
+                # groupParams.defaultExpanded: false once the UI supports it
+                # (openeverest/openeverest#1860); accordions always render expanded.
                 resourcesRequests:
-                    components:
-                        cpu:
-                            fieldParams:
-                                label: CPU Request
-                                placeholder: 600m
-                            path: spec.components.engine.resources.requests.cpu
-                            uiType: text
-                            validation:
-                              regex:
-                                pattern: '^([0-9]+m|[0-9]+(\.[0-9]{1,3})?)$'
-                                message: "Invalid CPU value. Use a whole or decimal number of cores (e.g. 1, 0.5, 1.5) or millicpu with an m suffix (e.g. 200m, 1500m)."
-                        memory:
-                            fieldParams:
-                                label: Memory Request
-                                placeholder: 1Gi
-                            path: spec.components.engine.resources.requests.memory
-                            uiType: text
-                            validation:
-                              regex:
-                                pattern: '^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei)$'
-                                message: "Invalid memory value. Use a number followed by a unit: Ki, Mi, Gi, Ti, Pi, or Ei (e.g. 128Mi, 1Gi). A unit is required."
-
-                    groupType: line
                     uiType: group
+                    groupType: accordion
+                    label: Resource requests
+                    components:
+                        requests:
+                            uiType: group
+                            groupType: line
+                            components:
+                                cpu:
+                                    fieldParams:
+                                        label: CPU Request
+                                        placeholder: 600m
+                                    path: spec.components.engine.resources.requests.cpu
+                                    uiType: text
+                                    validation:
+                                      regex:
+                                        pattern: '^([0-9]+m|[0-9]+(\.[0-9]{1,3})?)$'
+                                        message: "Invalid CPU value. Use a whole or decimal number of cores (e.g. 1, 0.5, 1.5) or millicpu with an m suffix (e.g. 200m, 1500m)."
+                                memory:
+                                    fieldParams:
+                                        label: Memory Request
+                                        placeholder: 1Gi
+                                    path: spec.components.engine.resources.requests.memory
+                                    uiType: text
+                                    validation:
+                                      regex:
+                                        pattern: '^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei)$'
+                                        message: "Invalid memory value. Use a number followed by a unit: Ki, Mi, Gi, Ti, Pi, or Ei (e.g. 128Mi, 1Gi). A unit is required."
+                            componentsOrder:
+                              - cpu
+                              - memory
+                    componentsOrder:
+                      - requests
             description: Configure the resources your database will have access to.
             label: Resources
             componentsOrder:
@@ -146,10 +158,10 @@ ui:
               components:
                 cpu:
                   uiType: text
-                  placeholder: 600m
                   path: spec.components.proxy.resources.limits.cpu
                   fieldParams:
                     label: CPU Limit
+                    placeholder: 600m
                     defaultValue: 200m
                   validation:
                     regex:
@@ -157,46 +169,82 @@ ui:
                       message: "Invalid CPU value. Use a whole or decimal number of cores (e.g. 1, 0.5, 1.5) or millicpu with an m suffix (e.g. 200m, 1500m)."
                 memory:
                   uiType: text
-                  placeholder: 1Gi
                   path: spec.components.proxy.resources.limits.memory
                   fieldParams:
                     label: Memory Limit
+                    placeholder: 1Gi
                     defaultValue: 128Mi
                   validation:
                     regex:
                       pattern: '^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei)$'
                       message: "Invalid memory value. Use a number followed by a unit: Ki, Mi, Gi, Ti, Pi, or Ei (e.g. 128Mi, 1Gi). A unit is required."
+              componentsOrder:
+                - cpu
+                - memory
+            # TODO: switch to groupType: collapsible with
+            # groupParams.defaultExpanded: false once the UI supports it
+            # (openeverest/openeverest#1860); accordions always render expanded.
             proxyRequests:
               uiType: group
-              groupType: line
+              groupType: accordion
+              label: Resource requests
               components:
-                cpu:
-                  placeholder: 200m
-                  uiType: text
-                  path: spec.components.proxy.resources.requests.cpu
-                  fieldParams:
-                    label: CPU Request
-                    defaultValue: 200m
-                  validation:
-                    regex:
-                      pattern: '^([0-9]+m|[0-9]+(\.[0-9]{1,3})?)$'
-                      message: "Invalid CPU value. Use a whole or decimal number of cores (e.g. 1, 0.5, 1.5) or millicpu with an m suffix (e.g. 200m, 1500m)."
-                memory:
-                  uiType: text
-                  placeholder: 128Mi
-                  path: spec.components.proxy.resources.requests.memory
-                  fieldParams:
-                    label: Memory Request
-                    defaultValue: 128Mi
-                  validation:
-                    regex:
-                      pattern: '^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei)$'
-                      message: "Invalid memory value. Use a number followed by a unit: Ki, Mi, Gi, Ti, Pi, or Ei (e.g. 128Mi, 1Gi). A unit is required."
+                requests:
+                  uiType: group
+                  groupType: line
+                  components:
+                    cpu:
+                      uiType: text
+                      path: spec.components.proxy.resources.requests.cpu
+                      fieldParams:
+                        label: CPU Request
+                        placeholder: 200m
+                        defaultValue: 200m
+                      validation:
+                        regex:
+                          pattern: '^([0-9]+m|[0-9]+(\.[0-9]{1,3})?)$'
+                          message: "Invalid CPU value. Use a whole or decimal number of cores (e.g. 1, 0.5, 1.5) or millicpu with an m suffix (e.g. 200m, 1500m)."
+                    memory:
+                      uiType: text
+                      path: spec.components.proxy.resources.requests.memory
+                      fieldParams:
+                        label: Memory Request
+                        placeholder: 128Mi
+                        defaultValue: 128Mi
+                      validation:
+                        regex:
+                          pattern: '^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei)$'
+                          message: "Invalid memory value. Use a number followed by a unit: Ki, Mi, Gi, Ti, Pi, or Ei (e.g. 128Mi, 1Gi). A unit is required."
+                  componentsOrder:
+                    - cpu
+                    - memory
+              componentsOrder:
+                - requests
+            proxyExposure:
+              uiType: select
+              path: spec.components.proxy.service.serviceType
+              fieldParams:
+                label: "Exposure"
+                helperText: "How clients reach PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster."
+                defaultValue: "ClusterIP"
+                options:
+                  - label: "ClusterIP"
+                    value: "ClusterIP"
+                  - label: "LoadBalancer"
+                    value: "LoadBalancer"
+                  - label: "NodePort"
+                    value: "NodePort"
+                # TODO: Support Service annotations and LoadBalancer source ranges
+                # https://github.com/openeverest/openeverest/issues/1959
+                # https://github.com/openeverest/openeverest/issues/2398
+              validation:
+                required: true
           componentsOrder:
             - proxyType
             - proxyNodes
             - proxyLimits
             - proxyRequests
+            - proxyExposure
         advanced:
             label: Advanced Configuration
             description: Fine-tune PostgreSQL by overriding its default configuration parameters.
