@@ -5,13 +5,18 @@ metadata:
   name: monitoring-bindings
 spec:
   description: |
-    PMM through Instance.spec.monitoring.destinations[]: core materialises a
-    ProviderManaged binding for the pmm entry, the provider renders
-    PerconaPGCluster.spec.pmm from it and mirrors the destination token,
-    keeps that rendering while the destination is gone, and disables PMM
-    and deletes the token copy once the entry is dropped. The monitoring-pmm
-    controller is not installed, so the class is claimed by hand; the Percona
-    operator is scaled to 0.
+    Monitoring through Instance.spec.monitoring.destinations[]: core
+    materialises one binding per entry. A ProviderManaged pmm binding renders
+    PerconaPGCluster.spec.pmm and mirrors the destination token. An
+    ExtensionManaged prometheus binding turns on the postgres_exporter and
+    pgbouncer_exporter sidecars with their monitor login, and the provider
+    publishes their endpoints once the components serve. Replacing prometheus
+    with victoriametrics keeps the exporters and endpoints, and dropping it
+    removes them while PMM stays. A deleted pmm destination keeps the live
+    spec.pmm, and dropping the pmm entry disables PMM and deletes the token
+    copy. No extension controller runs here, so the classes are claimed by
+    hand and the ExtensionManaged bindings are never Configured; the Percona
+    operator is scaled to 0, so readiness is patched into the cluster status.
   catch:
     - script:
         content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com,monitoringdestination,monitoringbinding,secret -o yaml
@@ -37,21 +42,52 @@ spec:
               kubectl -n provider-system wait --for=jsonpath='{.spec.replicas}'=0 deployment/provider-percona-postgresql-pg-operator --timeout=60s
         - apply:
             file: 00-install.yaml
-        # Stand in for the monitoring-pmm controller: a class is usable only
-        # once its controller has claimed it.
+        # Stand in for the extension controllers: a class is usable only once
+        # its controller has claimed it.
         - script:
             content: |
-              kubectl patch monitoringclass/pmm-it --subresource status --type merge \
-                -p '{"status":{"conditions":[{"type":"Accepted","status":"True","reason":"Accepted","message":"claimed by the test","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}'
+              for class in pmm-it prometheus-it victoriametrics-it; do
+                kubectl patch monitoringclass/$class --subresource status --type merge \
+                  -p '{"status":{"conditions":[{"type":"Accepted","status":"True","reason":"Accepted","message":"claimed by the test","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}'
+              done
         - assert:
             file: 00-assert.yaml
 
-    - name: create-cluster-with-pmm
+    - name: create-cluster-with-destinations
       try:
         - apply:
             file: 10-create-cluster.yaml
         - assert:
             file: 10-assert.yaml
+
+    # Simulate the Percona operator (scaled to 0) reporting ready pods: the
+    # provider publishes a component's metrics endpoint once it has one.
+    - name: cluster-ready
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE patch perconapgclusters.pgv2.percona.com/pg-bindings --subresource status --type merge \
+                -p '{"status":{"state":"ready","postgres":{"size":3,"ready":3},"pgbouncer":{"size":1,"ready":1}}}'
+        - assert:
+            file: 11-assert.yaml
+
+    - name: switch-prometheus-to-victoriametrics
+      try:
+        - apply:
+            file: 12-switch-to-victoriametrics.yaml
+        - assert:
+            file: 12-assert.yaml
+        - error:
+            file: 12-errors.yaml
+
+    - name: drop-victoriametrics-entry
+      try:
+        - apply:
+            file: 14-drop-victoriametrics.yaml
+        - assert:
+            file: 14-assert.yaml
+        - error:
+            file: 14-errors.yaml
 
     - name: delete-destination
       try:

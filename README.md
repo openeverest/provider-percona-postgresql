@@ -68,7 +68,7 @@ provider itself is covered under [Installation](#installation).
 | Version upgrades | ✅ | of the deployed PostgreSQL version — change `spec.version`; see [Versions](#versions) |
 | Custom configuration | ✅ | `spec.components.engine.parameters.configuration` — see [Custom PostgreSQL configuration](#custom-postgresql-configuration) |
 | Exposure | ✅ | `spec.components.proxy.service.serviceType`: `ClusterIP` (default), `LoadBalancer` or `NodePort`; applies to pgBouncer, so it needs `proxy.replicas` ≥ 1 |
-| Monitoring | ✅ | PMM 3, via a `spec.monitoring.destinations` entry naming a `MonitoringDestination` of a `pmm` class |
+| Monitoring | ✅ | via `spec.monitoring.destinations`: PMM 3 (`pmm` class), and Prometheus / VictoriaMetrics (or any metrics class) through `postgres_exporter` and `pgbouncer_exporter` sidecars — see [Monitoring](#monitoring) |
 | TLS | ⚠️ | the operator provisions certificates; nothing is exposed through the Instance API |
 
 Stateful workloads additionally report:
@@ -204,8 +204,54 @@ This provider currently exposes one technology-specific parameter beyond the sha
 component fields (replicas, resources, storage): `engine.parameters.configuration`,
 covered in [Custom PostgreSQL configuration](#custom-postgresql-configuration).
 
-When the instance sends to a PMM destination, its PostgreSQL metrics in PMM carry `namespace`
-and `core_openeverest_io_instance` labels, so they can be queried per instance.
+### Monitoring
+
+Monitoring is configured through `MonitoringDestination`s: each entry of
+`spec.monitoring.destinations` sends the instance's monitoring data to one destination.
+
+```yaml
+spec:
+  monitoring:
+    destinations:
+      - name: pmm
+        destinationRef:
+          name: pmm-prod
+        # Optional: resources of the PMM client container.
+        parameters:
+          resources:
+            limits:
+              memory: 256Mi
+      - name: prometheus
+        destinationRef:
+          name: prometheus
+```
+
+The provider declares its monitoring contract in
+[definition/monitoring.yaml](definition/monitoring.yaml): the `pmm` integration, and an
+exporter metrics endpoint on every `postgresql` and `pgbouncer` component.
+
+- **PMM** (the `pmm` class, installed by the `monitoring-pmm` extension) is rendered by the
+  provider into the operator's `spec.pmm`: the server from the destination's `url` parameter,
+  the token from the `token` key of its `ServiceAccountToken` credentials Secret, the PMM
+  client image from the class. pmm-client does not verify the PMM server certificate, so the
+  binding reports `AgentTLSNotVerified`. The instance's PostgreSQL metrics in PMM carry
+  `namespace` and `core_openeverest_io_instance` labels, so they can be queried per instance.
+- **Metrics backends** (for example the `prometheus` and `victoriametrics` classes) run a
+  `postgres_exporter` sidecar next to every PostgreSQL pod and a `pgbouncer_exporter` sidecar
+  next to every PgBouncer pod while one of the instance's destinations requires metrics. The
+  sidecars serve on the `metrics` port (9187 and 9127) and log in as the `everest-monitor`
+  superuser, whose credentials the operator generates in the
+  `<instance>-pguser-everest-monitor` Secret. PgBouncer lists it in `stats_users` and
+  authenticates admin-console logins against the `postgres` database (`auth_dbname`). The
+  images are pinned by the `postgresExporter` and `pgbouncerExporter` component types in
+  [definition/versions.yaml](definition/versions.yaml). The provider publishes each
+  component's endpoint in `status.monitoring.sources` once it has a ready pod, and the class's
+  extension creates the scrape resources. Adding or removing the sidecars restarts the pods one
+  at a time. The `everest-monitor` role stays in PostgreSQL after metrics are turned off; the
+  operator does not drop roles removed from its spec.
+
+`kubectl get monitoringbindings` lists one binding per destination entry, and the
+instance's `MonitoringConfigured` condition reports whether every entry is configured.
 
 ## Development
 

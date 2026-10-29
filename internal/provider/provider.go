@@ -337,6 +337,9 @@ func (p *Provider) Sync(c *controller.Context) error {
 			Databases: []upstreamv1beta1.PostgresIdentifier{"postgres"},
 		},
 	}
+	if err := configureMetricsExporters(c, cluster); err != nil {
+		return err
+	}
 
 	// Automatically remove storages that have no schedules and no Backup CRs
 	// referencing them. This frees repo slots for reuse.
