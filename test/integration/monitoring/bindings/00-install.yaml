@@ -17,11 +17,11 @@ spec:
       properties:
         url:
           type: string
-          pattern: '^https?://.+'
-          description: PMM Server URL, for example https://pmm.example.com.
-        verifyTLS:
-          type: boolean
-          description: Verify the PMM Server TLS certificate. Applies to this controller's readiness probe; the agents' TLS behaviour is the operator's. Defaults to true.
+          pattern: '^https?://[^/?#@]+([/?#].*)?$'
+  authModes:
+    - name: ServiceAccountToken
+      credentials:
+        required: [token]
   instanceParametersSchema:
     openAPIV3Schema:
       type: object
@@ -47,8 +47,6 @@ spec:
                   - type: string
                 pattern: '^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$'
                 x-kubernetes-int-or-string: true
-  credentialsSchema:
-    required: [apiKey]
 ---
 apiVersion: v1
 kind: Secret
@@ -56,7 +54,7 @@ metadata:
   name: pmm-it-token
 type: Opaque
 data:
-  apiKey: YWJjZGVm
+  token: YWJjZGVm
 ---
 apiVersion: monitoring.openeverest.io/v1alpha1
 kind: MonitoringDestination
@@ -65,8 +63,9 @@ metadata:
 spec:
   classRef:
     name: pmm-it
-  credentialsSecretRef:
-    name: pmm-it-token
   parameters:
     url: http://pmm-it.example.com
-    verifyTLS: false
+  authentication:
+    mode: ServiceAccountToken
+    credentialsSecretRef:
+      name: pmm-it-token
