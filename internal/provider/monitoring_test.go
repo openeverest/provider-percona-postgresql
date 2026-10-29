@@ -53,7 +53,7 @@ func newPMMTestContext(t *testing.T, in *corev1alpha1.Instance, objs ...client.O
 	provider := &corev1alpha1.Provider{
 		ObjectMeta: metav1.ObjectMeta{Name: common.ProviderName},
 		Spec: corev1alpha1.ProviderSpec{Monitoring: &corev1alpha1.ProviderMonitoring{
-			Integrations: map[string]corev1alpha1.MonitoringIntegration{"pmm": {AgentVersions: ">=3.0.0 <4.0.0"}},
+			Integrations: map[string]corev1alpha1.MonitoringIntegration{"pmm": {AgentVersions: ">=3.0.0 <4.0.0", AuthModes: []string{"ServiceAccountToken"}}},
 		}},
 	}
 	k8s := fake.NewClientBuilder().WithScheme(s).WithObjects(append(objs, provider)...).Build()
@@ -112,6 +112,11 @@ func pmmClass() *monitoringv1alpha1.MonitoringClass {
 				AgentImage:   "percona/pmm-client:3.8.0",
 				AgentVersion: "3.8.0",
 			},
+			AuthModes: []apicommon.AuthMode{{
+				Name:        "ServiceAccountToken",
+				Credentials: &apicommon.CredentialKeys{Required: []string{"token"}},
+			}},
+			URLPolicy: monitoringv1alpha1.URLPolicyRequired,
 		},
 	}
 }
@@ -120,9 +125,12 @@ func pmmDestination() *monitoringv1alpha1.MonitoringDestination {
 	return &monitoringv1alpha1.MonitoringDestination{
 		ObjectMeta: metav1.ObjectMeta{Name: "pmm", Namespace: pmmTestNamespace},
 		Spec: monitoringv1alpha1.MonitoringDestinationSpec{
-			ClassRef:             apicommon.ObjectRef{Name: "pmm"},
-			CredentialsSecretRef: &apicommon.SecretRef{Name: "pmm-token"},
-			Parameters:           &runtime.RawExtension{Raw: []byte(`{"url":"https://pmm.example.com","verifyTLS":true}`)},
+			ClassRef: apicommon.ObjectRef{Name: "pmm"},
+			URL:      "https://pmm.example.com",
+			Authentication: apicommon.Authentication{
+				Mode:                 "ServiceAccountToken",
+				CredentialsSecretRef: &apicommon.SecretRef{Name: "pmm-token"},
+			},
 		},
 	}
 }
@@ -130,7 +138,7 @@ func pmmDestination() *monitoringv1alpha1.MonitoringDestination {
 func pmmTokenSecret() *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "pmm-token", Namespace: pmmTestNamespace},
-		Data:       map[string][]byte{"apiKey": []byte(pmmTestToken)},
+		Data:       map[string][]byte{"token": []byte(pmmTestToken)},
 	}
 }
 
@@ -204,8 +212,10 @@ func TestApplyPMMRendersTheBinding(t *testing.T) {
 			assert.Equal(t, pmmTestInstance, mirror.OwnerReferences[0].Name)
 			assert.Equal(t, new(true), mirror.OwnerReferences[0].Controller, "the Secret is deleted with the Instance")
 
-			_, _, staged := c.MonitoringBindingResult(b.Name)
-			assert.False(t, staged, "a rendered binding is reported Configured by the runtime")
+			reason, message, staged := c.MonitoringBindingResult(b.Name)
+			require.True(t, staged)
+			assert.Equal(t, monitoringv1alpha1.ReasonAgentTLSNotVerified, reason)
+			assert.Contains(t, message, "PMM_AGENT_SERVER_INSECURE_TLS=1")
 		})
 	}
 }
@@ -267,39 +277,40 @@ func TestApplyPMMReportsRenderFailed(t *testing.T) {
 	}{
 		"relative URL": {
 			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
-				d.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"url":"pmm.example.com"}`)}
+				d.Spec.URL = "pmm.example.com"
 			},
-			message: `MonitoringDestination "pmm" parameters.url "pmm.example.com" is not an absolute URL`,
+			message: `MonitoringDestination "pmm" url "pmm.example.com" is not an absolute URL`,
 		},
-		"no credentials Secret reference": {
+		"mode the class does not define": {
 			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
-				d.Spec.CredentialsSecretRef = nil
+				d.Spec.Authentication = apicommon.Authentication{Mode: apicommon.AuthModeAnonymous}
 			},
-			message: `MonitoringDestination "pmm" sets no credentialsSecretRef`,
+			message: `MonitoringClass "pmm" has no authentication mode "Anonymous"`,
+		},
+		"mode without a token": {
+			mutate: func(cl *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
+				cl.Spec.AuthModes = append(cl.Spec.AuthModes, apicommon.AuthMode{Name: apicommon.AuthModeAnonymous})
+				d.Spec.Authentication = apicommon.Authentication{Mode: apicommon.AuthModeAnonymous}
+			},
+			message: `MonitoringDestination "pmm" authentication mode "Anonymous" provides no "token" credential`,
 		},
 		"credentials Secret missing": {
 			mutate: func(_ *monitoringv1alpha1.MonitoringClass, _ *monitoringv1alpha1.MonitoringDestination, s *corev1.Secret) {
 				s.Name = "another-token"
 			},
-			message: `get PMM credentials Secret "pmm-token"`,
+			message: `get credentials Secret "pmm-token" of MonitoringDestination "pmm"`,
 		},
-		"credentials Secret without apiKey": {
+		"credentials Secret without token": {
 			mutate: func(_ *monitoringv1alpha1.MonitoringClass, _ *monitoringv1alpha1.MonitoringDestination, s *corev1.Secret) {
-				s.Data = map[string][]byte{"token": []byte(pmmTestToken)}
+				s.Data = map[string][]byte{"apiKey": []byte(pmmTestToken)}
 			},
-			message: `PMM credentials Secret "pmm-token" must contain non-empty "apiKey" key`,
+			message: `missing key "token" required by authentication mode "ServiceAccountToken"`,
 		},
 		"class without agentImage": {
 			mutate: func(cl *monitoringv1alpha1.MonitoringClass, _ *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
 				cl.Spec.ProviderManaged.AgentImage = ""
 			},
 			message: `MonitoringClass "pmm" sets no providerManaged.agentImage`,
-		},
-		"undecodable destination parameters": {
-			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
-				d.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"url":42}`)}
-			},
-			message: `decode MonitoringDestination "pmm" parameters`,
 		},
 		"undecodable binding parameters": {
 			bindingParams: `{"resources":{"limits":{"memory":"lots"}}}`,
@@ -344,14 +355,6 @@ func TestApplyPMMReturnsAPIErrors(t *testing.T) {
 
 	errUnavailable := errors.New("apiserver unavailable")
 	tests := map[string]interceptor.Funcs{
-		"credentials Secret read fails": {
-			Get: func(ctx context.Context, k8s client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-				if key.Name == "pmm-token" {
-					return errUnavailable
-				}
-				return k8s.Get(ctx, key, obj, opts...)
-			},
-		},
 		"token Secret apply fails": {
 			Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
 				return errUnavailable
@@ -374,6 +377,32 @@ func TestApplyPMMReturnsAPIErrors(t *testing.T) {
 			assert.False(t, staged, "an API error is not reported as RenderFailed")
 		})
 	}
+}
+
+func TestApplyPMMReportsCredentialsReadFailure(t *testing.T) {
+	t.Parallel()
+
+	in := monitoredInstance("pmm")
+	b := acceptedBinding("pmm", "pmm", corev1alpha1.MonitoringExecutionModeProviderManaged)
+	live := liveCluster()
+	_, k8s := newPMMTestContext(t, in, pmmClass(), pmmDestination(), pmmTokenSecret(), b, live)
+	c := controller.NewContext(t.Context(), interceptor.NewClient(k8s, interceptor.Funcs{
+		Get: func(ctx context.Context, k8s client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if key.Name == "pmm-token" {
+				return errors.New("apiserver unavailable")
+			}
+			return k8s.Get(ctx, key, obj, opts...)
+		},
+	}), in, common.ProviderName)
+
+	cluster := &pgv2.PerconaPGCluster{}
+	require.NoError(t, applyPMM(c, cluster))
+
+	reason, message, staged := c.MonitoringBindingResult(b.Name)
+	require.True(t, staged)
+	assert.Equal(t, monitoringv1alpha1.ReasonRenderFailed, reason)
+	assert.Contains(t, message, "apiserver unavailable")
+	assert.Equal(t, live.Spec.PMM, cluster.Spec.PMM, "the live rendering is kept")
 }
 
 func TestApplyPMMDisabledWithoutPMMEntry(t *testing.T) {

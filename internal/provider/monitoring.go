@@ -21,7 +21,7 @@ import (
 const (
 	// pmmIntegration is the integration declared in definition/monitoring.yaml.
 	pmmIntegration         = "pmm"
-	pmmDestinationTokenKey = "apiKey"
+	pmmDestinationTokenKey = "token"
 	pgPMMServerToken       = "PMM_SERVER_TOKEN"
 	pmmSecretSuffix        = "-pmm-secret"
 )
@@ -32,12 +32,6 @@ func (p *Provider) MonitoringIntegrations() []string {
 }
 
 var _ controller.MonitoringIntegrationsProvider = (*Provider)(nil)
-
-// pmmDestinationParameters is MonitoringDestination.spec.parameters of the
-// pmm class.
-type pmmDestinationParameters struct {
-	URL string `json:"url"`
-}
 
 // pmmInstanceParameters is Instance.spec.monitoring.destinations[].parameters
 // of the pmm class.
@@ -99,6 +93,8 @@ func applyPMM(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
 			return err
 		}
 		cluster.Spec.PMM = spec
+		c.SetMonitoringBindingResult(rb.Binding.Name, monitoringv1alpha1.ReasonAgentTLSNotVerified,
+			"pmm-client does not verify the PMM server certificate, whatever the destination's tls says: the Percona operator runs it with PMM_AGENT_SERVER_INSECURE_TLS=1")
 		return nil
 	}
 	return nil
@@ -107,18 +103,21 @@ func applyPMM(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
 // renderPMM builds spec.pmm for an Apply-able pmm binding and mirrors the
 // destination's token into the Secret the operator reads it from.
 func renderPMM(c *controller.Context, rb controller.ResolvedBinding) (*pgv2.PMMSpec, error) {
-	dst := pmmDestinationParameters{}
-	if rb.Destination.Spec.Parameters != nil {
-		if err := json.Unmarshal(rb.Destination.Spec.Parameters.Raw, &dst); err != nil {
-			return nil, renderFailed("decode MonitoringDestination %q parameters: %w", rb.Destination.Name, err)
-		}
-	}
-	u, err := url.Parse(dst.URL)
+	u, err := url.Parse(rb.Destination.Spec.URL)
 	if err != nil || u.Host == "" {
-		return nil, renderFailed("MonitoringDestination %q parameters.url %q is not an absolute URL", rb.Destination.Name, dst.URL)
+		return nil, renderFailed("MonitoringDestination %q url %q is not an absolute URL", rb.Destination.Name, rb.Destination.Spec.URL)
 	}
-	if rb.Destination.Spec.CredentialsSecretRef == nil {
-		return nil, renderFailed("MonitoringDestination %q sets no credentialsSecretRef", rb.Destination.Name)
+	// A missing Secret or key is a render failure; other API errors are retried.
+	mode, data, err := c.MonitoringCredentials(rb)
+	if _, isAPIErr := errors.AsType[*apierrors.StatusError](err); isAPIErr && !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("read PMM credentials: %w", err)
+	}
+	if err != nil {
+		return nil, renderFailedError{err}
+	}
+	token := data[pmmDestinationTokenKey]
+	if len(token) == 0 {
+		return nil, renderFailed("MonitoringDestination %q authentication mode %q provides no %q credential", rb.Destination.Name, mode, pmmDestinationTokenKey)
 	}
 	image := rb.Class.Spec.ProviderManaged.AgentImage
 	if image == "" {
@@ -140,7 +139,7 @@ func renderPMM(c *controller.Context, rb controller.ResolvedBinding) (*pgv2.PMMS
 	}
 
 	pmmSecretName := c.Name() + pmmSecretSuffix
-	if err := mirrorPMMToken(c, rb.Destination.Spec.CredentialsSecretRef.Name, pmmSecretName); err != nil {
+	if err := mirrorPMMToken(c, token, pmmSecretName); err != nil {
 		return nil, err
 	}
 
@@ -180,22 +179,10 @@ func prometheusLabelName(key string) string {
 
 // mirrorPMMToken applies the destination token to the Secret the operator
 // reads it from, owned by the Instance so it is deleted with it.
-func mirrorPMMToken(c *controller.Context, credentialsSecretName, pmmSecretName string) error {
-	credentialsSecret := &corev1.Secret{}
-	if err := c.Get(credentialsSecret, credentialsSecretName); err != nil {
-		if apierrors.IsNotFound(err) {
-			return renderFailed("get PMM credentials Secret %q: %w", credentialsSecretName, err)
-		}
-		return fmt.Errorf("get PMM credentials Secret %q: %w", credentialsSecretName, err)
-	}
-	apiKey, ok := credentialsSecret.Data[pmmDestinationTokenKey]
-	if !ok || len(apiKey) == 0 {
-		return renderFailed("PMM credentials Secret %q must contain non-empty %q key", credentialsSecretName, pmmDestinationTokenKey)
-	}
-
+func mirrorPMMToken(c *controller.Context, token []byte, pmmSecretName string) error {
 	if err := c.Apply(&corev1.Secret{
 		ObjectMeta: c.ObjectMeta(pmmSecretName),
-		Data:       map[string][]byte{pgPMMServerToken: apiKey},
+		Data:       map[string][]byte{pgPMMServerToken: token},
 	}); err != nil {
 		return fmt.Errorf("apply PMM Secret %q: %w", pmmSecretName, err)
 	}

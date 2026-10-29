@@ -202,10 +202,10 @@ github.com/onsi/ginkgo/v2 v2.28.3 h1:4JvMdwtFU0imd8fHx25OJXoDMRexnf8v5NHKYSTTji4
 github.com/onsi/ginkgo/v2 v2.28.3/go.mod h1:+aXOY+vzZ5mu2iI2HpTZUPmM//oQfsNFX6gU9kNcA44=
 github.com/onsi/gomega v1.40.0 h1:Vtol0e1MghCD2ZVIilPDIg44XSL9l2QAn8ZNaljWcJc=
 github.com/onsi/gomega v1.40.0/go.mod h1:M/Uqpu/8qTjtzCLUA2zJHX9Iilrau25x1PdoSRbWh5A=
-github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261027202124-dddd83709e1b h1:LDF9J5cPD++ZEy/Yid7rZvQ2A5SCjneUI16IfFcw95U=
-github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261027202124-dddd83709e1b/go.mod h1:sD1MCon5AHx4lmToy/RYTU9cdzoDw3yjrsVnuZ1FU8c=
-github.com/openeverest/provider-sdk v0.3.1-0.20261027204428-af9c51d03896 h1:u2g0ZrzJQGDOapP2oTZarNvrRFiSOvuT4RfSsJfp/C0=
-github.com/openeverest/provider-sdk v0.3.1-0.20261027204428-af9c51d03896/go.mod h1:M49TDvK3nTSOc/dUm4a4NqDQuWvmGKU4wLpUVXFe1Us=
+github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261028210054-b5db8609027e h1:G6FQUkRmt6xX/wqWkWD2ZXmRMthj9X6Fg/orSeURfgQ=
+github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261028210054-b5db8609027e/go.mod h1:xwF4xZRcLBQT66DuOWcaX6uSE3Yk4vZ5gENDfiYWw2s=
+github.com/openeverest/provider-sdk v0.3.1-0.20261028210529-4c05daf204fc h1:VcDqwKB1XOHxV0Da84CMIMNLjre4drkywmb8kYn6FWU=
+github.com/openeverest/provider-sdk v0.3.1-0.20261028210529-4c05daf204fc/go.mod h1:8qLhcUPz1adgMzlaNHbG0eFhff859VAqmqceU+uFa+k=
 github.com/pborman/getopt v0.0.0-20170112200414-7148bc3a4c30/go.mod h1:85jBQOZwpVEaDAr341tbn15RS4fCAsIst0qp7i8ex1o=
 github.com/percona/percona-postgresql-operator/v2 v2.9.1-0.20260522133121-1f77e9d3c184 h1:5UsPFYemyDyw772RfvRMbpW8DKlcE0Gbz6vg3heUWcY=
 github.com/percona/percona-postgresql-operator/v2 v2.9.1-0.20260522133121-1f77e9d3c184/go.mod h1:W7NbppqFqkbyha3ducejFNQ+TlSXaX7FB9T0Xej1cvs=
