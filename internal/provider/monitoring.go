@@ -33,6 +33,12 @@ func (p *Provider) MonitoringIntegrations() []string {
 
 var _ controller.MonitoringIntegrationsProvider = (*Provider)(nil)
 
+// pmmDestinationParameters is MonitoringDestination.spec.parameters of the
+// pmm class.
+type pmmDestinationParameters struct {
+	URL string `json:"url"`
+}
+
 // pmmInstanceParameters is Instance.spec.monitoring.destinations[].parameters
 // of the pmm class.
 type pmmInstanceParameters struct {
@@ -103,9 +109,15 @@ func applyPMM(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
 // renderPMM builds spec.pmm for an Apply-able pmm binding and mirrors the
 // destination's token into the Secret the operator reads it from.
 func renderPMM(c *controller.Context, rb controller.ResolvedBinding) (*pgv2.PMMSpec, error) {
-	u, err := url.Parse(rb.Destination.Spec.URL)
+	dst := pmmDestinationParameters{}
+	if rb.Destination.Spec.Parameters != nil {
+		if err := json.Unmarshal(rb.Destination.Spec.Parameters.Raw, &dst); err != nil {
+			return nil, renderFailed("decode MonitoringDestination %q parameters: %w", rb.Destination.Name, err)
+		}
+	}
+	u, err := url.Parse(dst.URL)
 	if err != nil || u.Host == "" {
-		return nil, renderFailed("MonitoringDestination %q url %q is not an absolute URL", rb.Destination.Name, rb.Destination.Spec.URL)
+		return nil, renderFailed("MonitoringDestination %q parameters.url %q is not an absolute URL", rb.Destination.Name, dst.URL)
 	}
 	// A missing Secret or key is a render failure; other API errors are retried.
 	mode, data, err := c.MonitoringCredentials(rb)

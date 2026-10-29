@@ -116,7 +116,6 @@ func pmmClass() *monitoringv1alpha1.MonitoringClass {
 				Name:        "ServiceAccountToken",
 				Credentials: &apicommon.CredentialKeys{Required: []string{"token"}},
 			}},
-			URLPolicy: monitoringv1alpha1.URLPolicyRequired,
 		},
 	}
 }
@@ -125,8 +124,8 @@ func pmmDestination() *monitoringv1alpha1.MonitoringDestination {
 	return &monitoringv1alpha1.MonitoringDestination{
 		ObjectMeta: metav1.ObjectMeta{Name: "pmm", Namespace: pmmTestNamespace},
 		Spec: monitoringv1alpha1.MonitoringDestinationSpec{
-			ClassRef: apicommon.ObjectRef{Name: "pmm"},
-			URL:      "https://pmm.example.com",
+			ClassRef:   apicommon.ObjectRef{Name: "pmm"},
+			Parameters: &runtime.RawExtension{Raw: []byte(`{"url":"https://pmm.example.com"}`)},
 			Authentication: apicommon.Authentication{
 				Mode:                 "ServiceAccountToken",
 				CredentialsSecretRef: &apicommon.SecretRef{Name: "pmm-token"},
@@ -277,9 +276,15 @@ func TestApplyPMMReportsRenderFailed(t *testing.T) {
 	}{
 		"relative URL": {
 			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
-				d.Spec.URL = "pmm.example.com"
+				d.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"url":"pmm.example.com"}`)}
 			},
-			message: `MonitoringDestination "pmm" url "pmm.example.com" is not an absolute URL`,
+			message: `MonitoringDestination "pmm" parameters.url "pmm.example.com" is not an absolute URL`,
+		},
+		"undecodable destination parameters": {
+			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
+				d.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"url":443}`)}
+			},
+			message: `decode MonitoringDestination "pmm" parameters`,
 		},
 		"mode the class does not define": {
 			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
