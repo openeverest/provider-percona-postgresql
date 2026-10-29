@@ -30,7 +30,7 @@ permissions:
 
 env:
   IMG: provider-percona-postgresql:ci
-  OPENEVEREST_BRANCH: monitoring/auth-tls-url
+  OPENEVEREST_BRANCH: main
 
 jobs:
   run:
