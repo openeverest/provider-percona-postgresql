@@ -231,10 +231,11 @@ The provider declares its monitoring contract in
 exporter metrics endpoint on every `postgresql` and `pgbouncer` component.
 
 - **PMM** (the `pmm` class, installed by the `monitoring-pmm` extension) is rendered by the
-  provider into the operator's `spec.pmm`: the server from the destination's `url`, the
-  token from the `apiKey` key of its credentials Secret, the PMM client image from the
-  class. The instance's PostgreSQL metrics in PMM carry `namespace` and
-  `core_openeverest_io_instance` labels, so they can be queried per instance.
+  provider into the operator's `spec.pmm`: the server from the destination's `url` parameter,
+  the token from the `token` key of its `ServiceAccountToken` credentials Secret, the PMM
+  client image from the class. pmm-client does not verify the PMM server certificate, so the
+  binding reports `AgentTLSNotVerified`. The instance's PostgreSQL metrics in PMM carry
+  `namespace` and `core_openeverest_io_instance` labels, so they can be queried per instance.
 - **Metrics backends** (for example the `prometheus` and `victoriametrics` classes) run a
   `postgres_exporter` sidecar next to every PostgreSQL pod and a `pgbouncer_exporter` sidecar
   next to every PgBouncer pod while one of the instance's destinations requires metrics. The
