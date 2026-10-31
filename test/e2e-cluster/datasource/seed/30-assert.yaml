@@ -53,13 +53,15 @@ spec:
         - secret:
             name: pg-src-pgbackrest-repo1-creds
       global:
+        (starts_with("repo1-path", join('/', ['', 'backups', $namespace, 'pg-src', '']))): true
+        (ends_with("repo1-path", '/seaweedfs-storage')): true
         repo1-s3-uri-style: path
         repo1-storage-verify-tls: "n"
       repos:
         - name: repo1
           s3:
             bucket: everest-operator
-            endpoint: https://seaweedfs.seaweedfs.svc
+            endpoint: seaweedfs.seaweedfs.svc
             region: us-east-1
           schedules:
             full: 0 2 * * *
