@@ -5,12 +5,17 @@ import (
 	"testing"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
+	"github.com/openeverest/openeverest/v2/api/backup/v1alpha1/storageclasses"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
+	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
+	upstreamv1beta1 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/upstream.pgv2.percona.com/v1beta1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1110,4 +1115,313 @@ func TestAutoRegisterStorage_RespectsMaxRepos(t *testing.T) {
 	assert.Contains(t, err.Error(), "maximum number of backup repositories")
 	assert.False(t, registered)
 	assert.Len(t, c.Instance().Spec.Backup.Storages, 4)
+}
+
+const repoTestNamespace = "everest"
+
+// s3Storage returns an Accepted s3 BackupStorage named name, keeping its
+// backups under the prefix team-a of the bucket backups, and its credentials
+// Secret.
+func s3Storage(name, parameters string, tls *apicommon.TLSConfig) []client.Object {
+	return []client.Object{
+		&backupv1alpha1.BackupStorage{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: repoTestNamespace, Generation: 1},
+			Spec: backupv1alpha1.BackupStorageSpec{
+				BackupStorageClassRef: apicommon.ObjectRef{Name: storageclasses.ClassS3},
+				Location:              backupv1alpha1.BackupStorageLocation{Bucket: "backups", Prefix: "team-a"},
+				Parameters:            &runtime.RawExtension{Raw: []byte(parameters)},
+				Authentication: apicommon.Authentication{
+					Mode:                 storageclasses.AuthModeAccessKey,
+					CredentialsSecretRef: &apicommon.SecretRef{Name: name + "-creds"},
+				},
+				TLS: tls,
+			},
+			Status: backupv1alpha1.BackupStorageStatus{Conditions: []metav1.Condition{{
+				Type: backupv1alpha1.BackupStorageConditionAccepted, Status: metav1.ConditionTrue,
+				Reason: backupv1alpha1.ReasonAccepted, ObservedGeneration: 1, LastTransitionTime: metav1.Now(),
+			}}},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-creds", Namespace: repoTestNamespace},
+			Data: map[string][]byte{
+				storageclasses.KeyAWSAccessKeyID:     []byte("key"),
+				storageclasses.KeyAWSSecretAccessKey: []byte("secret"),
+			},
+		},
+	}
+}
+
+// backupInstance returns the Instance pg with backups enabled on one entry per
+// storage name.
+func backupInstance(storages ...string) *corev1alpha1.Instance {
+	in := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "pg", Namespace: repoTestNamespace, UID: "pg-uid"},
+		Spec: corev1alpha1.InstanceSpec{
+			ProviderRef: apicommon.ObjectRef{Name: common.ProviderName},
+			Backup:      &corev1alpha1.InstanceBackupSpec{Enabled: true, ClassRef: apicommon.ObjectRef{Name: "pg"}},
+		},
+	}
+	for _, s := range storages {
+		in.Spec.Backup.Storages = append(in.Spec.Backup.Storages, corev1alpha1.InstanceBackupStorage{StorageRef: apicommon.ObjectRef{Name: s}})
+	}
+	return in
+}
+
+// newRepoTestContext returns a Context for in whose client holds objs, the pg
+// BackupClass and the Provider.
+func newRepoTestContext(t *testing.T, in *corev1alpha1.Instance, objs ...client.Object) *controller.Context {
+	t.Helper()
+	s := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(s))
+	require.NoError(t, corev1alpha1.AddToScheme(s))
+	require.NoError(t, backupv1alpha1.AddToScheme(s))
+	require.NoError(t, pgv2.AddToScheme(s))
+	class := &backupv1alpha1.BackupClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "pg"},
+		Spec: backupv1alpha1.BackupClassSpec{
+			ExecutionMode: backupv1alpha1.BackupExecutionModeProviderManaged,
+			BackupStorageClasses: []backupv1alpha1.BackupStorageClassSupport{
+				{Name: storageclasses.ClassS3, AuthModes: []string{storageclasses.AuthModeAccessKey}},
+			},
+		},
+	}
+	provider := &corev1alpha1.Provider{
+		ObjectMeta: metav1.ObjectMeta{Name: common.ProviderName},
+		Spec: corev1alpha1.ProviderSpec{ComponentTypes: map[string]corev1alpha1.ComponentType{
+			componentTypePGBackRest: {
+				DefaultVersion: "2.56.0",
+				Versions:       []corev1alpha1.ComponentVersion{{Version: "2.56.0", Image: "percona/pgbackrest:2.56.0"}},
+			},
+		}},
+	}
+	k8s := fake.NewClientBuilder().WithScheme(s).WithObjects(append(objs, class, provider)...).Build()
+	return controller.NewContext(t.Context(), k8s, in, common.ProviderName)
+}
+
+// liveBackupCluster returns the PerconaPGCluster pg with the slot map slots
+// and the repos repo1, for the storage aws, and repo2, for a storage the
+// Instance dropped.
+func liveBackupCluster(slots string) *pgv2.PerconaPGCluster {
+	return &pgv2.PerconaPGCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "pg",
+			Namespace:   repoTestNamespace,
+			Annotations: map[string]string{repoSlotMapAnnotation: slots},
+		},
+		Spec: pgv2.PerconaPGClusterSpec{Backups: pgv2.Backups{PGBackRest: pgv2.PGBackRestArchive{
+			Repos: []upstreamv1beta1.PGBackRestRepo{
+				{Name: "repo1", S3: &upstreamv1beta1.RepoS3{Bucket: "backups", Endpoint: "s3.eu-west-1.amazonaws.com", Region: "eu-west-1"}},
+				{Name: "repo2", S3: &upstreamv1beta1.RepoS3{Bucket: "other", Endpoint: "s3.eu-west-1.amazonaws.com", Region: "eu-west-1"}},
+			},
+			Global: map[string]string{
+				"repo1-path":           "/team-a/backups/everest/pg/pg-uid/aws",
+				"repo1-retention-full": "7",
+				"repo2-path":           "/team-a/backups/everest/pg/pg-uid/gone",
+			},
+			Configuration: []corev1.VolumeProjection{
+				{Secret: &corev1.SecretProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "pg-pgbackrest-repo1-creds"}}},
+				{Secret: &corev1.SecretProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "pg-pgbackrest-repo2-creds"}}},
+			},
+		}}},
+	}
+}
+
+const awsParameters = `{"region":"eu-west-1","endpointURL":"https://s3.eu-west-1.amazonaws.com"}`
+
+func TestBuildPGBackRestRepos(t *testing.T) {
+	t.Parallel()
+
+	t.Run("renders an accepted storage under its path in the bucket", func(t *testing.T) {
+		t.Parallel()
+
+		three := int32(3)
+		in := backupInstance("aws")
+		in.Spec.Backup.Storages[0].Schedules = []corev1alpha1.InstanceBackupSchedule{{
+			Name: "full", Enabled: true, Cron: "0 2 * * *",
+			Retention: &corev1alpha1.BackupScheduleRetention{Type: corev1alpha1.BackupScheduleRetentionTypeCount, Count: &three},
+		}}
+		c := newRepoTestContext(t, in, s3Storage("aws", awsParameters, nil)...)
+
+		got, err := buildPGBackRestRepos(c, &pgv2.PerconaPGCluster{}, repoSlotMap{"aws": 0})
+
+		require.NoError(t, err)
+		cron := "0 2 * * *"
+		assert.Equal(t, []upstreamv1beta1.PGBackRestRepo{{
+			Name:            "repo1",
+			S3:              &upstreamv1beta1.RepoS3{Bucket: "backups", Endpoint: "s3.eu-west-1.amazonaws.com", Region: "eu-west-1"},
+			BackupSchedules: &upstreamv1beta1.PGBackRestBackupSchedules{Full: &cron},
+		}}, got.repos)
+		assert.Equal(t, map[string]string{
+			"repo1-path":                "/team-a/backups/everest/pg/pg-uid/aws",
+			"repo1-retention-full":      "3",
+			"repo1-retention-full-type": "count",
+		}, got.global)
+		assert.Equal(t, []corev1.VolumeProjection{
+			{Secret: &corev1.SecretProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "pg-pgbackrest-repo1-creds"}}},
+		}, got.configuration)
+		require.Len(t, got.secrets, 1)
+		assert.Equal(t, "pg-pgbackrest-repo1-creds", got.secrets[0].Name)
+		assert.Equal(t, map[string]string{
+			"repo1-s3-credentials.conf": "[global]\nrepo1-s3-key=key\nrepo1-s3-key-secret=secret\n",
+		}, got.secrets[0].StringData)
+		assert.Equal(t, map[string]struct{}{"pg-pgbackrest-repo1-creds": {}}, got.secretNames)
+	})
+
+	t.Run("an S3-compatible gateway keeps its port, path style and skipped verification", func(t *testing.T) {
+		t.Parallel()
+
+		c := newRepoTestContext(t, backupInstance("seaweedfs"), s3Storage("seaweedfs",
+			`{"region":"us-east-1","endpointURL":"https://seaweedfs.seaweedfs.svc:8333","forcePathStyle":true,"implementation":"other"}`,
+			&apicommon.TLSConfig{InsecureSkipVerify: true},
+		)...)
+
+		got, err := buildPGBackRestRepos(c, &pgv2.PerconaPGCluster{}, repoSlotMap{"seaweedfs": 1})
+
+		require.NoError(t, err)
+		require.Len(t, got.repos, 1)
+		assert.Equal(t, "repo2", got.repos[0].Name)
+		assert.Equal(t, &upstreamv1beta1.RepoS3{Bucket: "backups", Endpoint: "seaweedfs.seaweedfs.svc:8333", Region: "us-east-1"}, got.repos[0].S3)
+		assert.Equal(t, map[string]string{
+			"repo2-path":               "/team-a/backups/everest/pg/pg-uid/seaweedfs",
+			"repo2-s3-uri-style":       "path",
+			"repo2-storage-verify-tls": "n",
+		}, got.global)
+	})
+
+	t.Run("a custom CA is mounted next to the credentials", func(t *testing.T) {
+		t.Parallel()
+
+		const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+		objs := s3Storage("aws", awsParameters, &apicommon.TLSConfig{
+			CA: &apicommon.CABundleSource{SecretKeyRef: &apicommon.SecretKeyRef{Name: "s3-ca", Key: "ca.crt"}},
+		})
+		objs = append(objs, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "s3-ca", Namespace: repoTestNamespace},
+			Data:       map[string][]byte{"ca.crt": []byte(pem)},
+		})
+		c := newRepoTestContext(t, backupInstance("aws"), objs...)
+
+		got, err := buildPGBackRestRepos(c, &pgv2.PerconaPGCluster{}, repoSlotMap{"aws": 0})
+
+		require.NoError(t, err)
+		assert.Equal(t, "/etc/pgbackrest/conf.d/repo1-storage-ca.crt", got.global["repo1-storage-ca-file"])
+		assert.NotContains(t, got.global, "repo1-storage-verify-tls")
+		require.Len(t, got.secrets, 1)
+		assert.Equal(t, pem, got.secrets[0].StringData["repo1-storage-ca.crt"])
+	})
+
+	for _, tt := range []struct {
+		name       string
+		parameters string
+		wantReason string
+	}{
+		{
+			name:       "plain HTTP is rejected",
+			parameters: `{"region":"us-east-1","endpointURL":"http://minio.minio.svc:9000","forcePathStyle":true}`,
+			wantReason: corev1alpha1.ReasonUnsupportedParameter,
+		},
+		{
+			name:       "GCS is rejected",
+			parameters: `{"region":"auto","endpointURL":"https://storage.googleapis.com","implementation":"gcs"}`,
+			wantReason: corev1alpha1.ReasonImplementationUnsupported,
+		},
+		{
+			name:       "an unknown parameter is rejected",
+			parameters: `{"region":"us-east-1","endpointURL":"https://s3.amazonaws.com","storageClass":"GLACIER"}`,
+			wantReason: corev1alpha1.ReasonUnsupportedParameter,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := newRepoTestContext(t, backupInstance("aws"), s3Storage("aws", tt.parameters, nil)...)
+
+			got, err := buildPGBackRestRepos(c, &pgv2.PerconaPGCluster{}, repoSlotMap{"aws": 0})
+
+			require.NoError(t, err)
+			assert.Empty(t, got.repos)
+			assert.Empty(t, got.global)
+			assert.Empty(t, got.secrets)
+			storages, err := c.BackupStorages()
+			require.NoError(t, err)
+			require.Len(t, storages, 1)
+			assert.Equal(t, tt.wantReason, storages[0].Reason)
+		})
+	}
+
+	t.Run("an entry that is not applied keeps what the live cluster has for its slot", func(t *testing.T) {
+		t.Parallel()
+
+		in := backupInstance("aws")
+		live := liveBackupCluster(`{"aws":0,"gone":1}`)
+		c := newRepoTestContext(t, in, s3Storage("aws", `{"region":"eu-west-1","endpointURL":"http://s3.eu-west-1.amazonaws.com"}`, nil)...)
+
+		got, err := buildPGBackRestRepos(c, live, reconcileRepoSlotMap(loadRepoSlotMap(live), in.Spec.Backup.Storages))
+
+		require.NoError(t, err)
+		assert.Equal(t, live.Spec.Backups.PGBackRest.Repos[:1], got.repos)
+		assert.Equal(t, map[string]string{
+			"repo1-path":           "/team-a/backups/everest/pg/pg-uid/aws",
+			"repo1-retention-full": "7",
+		}, got.global)
+		assert.Equal(t, live.Spec.Backups.PGBackRest.Configuration[:1], got.configuration)
+		assert.Empty(t, got.secrets)
+		assert.Equal(t, map[string]struct{}{"pg-pgbackrest-repo1-creds": {}}, got.secretNames)
+	})
+
+	t.Run("a new entry that is not applied is left out, even in a slot another storage used", func(t *testing.T) {
+		t.Parallel()
+
+		in := backupInstance("fresh")
+		live := liveBackupCluster(`{"aws":0,"gone":1}`)
+		c := newRepoTestContext(t, in)
+		slots := reconcileRepoSlotMap(loadRepoSlotMap(live), in.Spec.Backup.Storages)
+		require.Equal(t, repoSlotMap{"fresh": 0}, slots)
+
+		got, err := buildPGBackRestRepos(c, live, slots)
+
+		require.NoError(t, err)
+		assert.Empty(t, got.repos)
+		assert.Empty(t, got.global)
+		assert.Empty(t, got.configuration)
+		assert.Empty(t, got.secretNames)
+		storages, err := c.BackupStorages()
+		require.NoError(t, err)
+		assert.Equal(t, corev1alpha1.ReasonBackupStorageNotFound, storages[0].Reason)
+	})
+}
+
+func TestApplyBackupSettings(t *testing.T) {
+	t.Parallel()
+
+	t.Run("applies the credentials of the rendered repos and deletes the others", func(t *testing.T) {
+		t.Parallel()
+
+		stale := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "pg-pgbackrest-repo2-creds", Namespace: repoTestNamespace}}
+		c := newRepoTestContext(t, backupInstance("aws"), append(s3Storage("aws", awsParameters, nil), stale)...)
+		cluster := &pgv2.PerconaPGCluster{}
+
+		require.NoError(t, applyBackupSettings(c, cluster))
+
+		require.NotNil(t, cluster.Spec.Backups.Enabled)
+		assert.True(t, *cluster.Spec.Backups.Enabled)
+		require.Len(t, cluster.Spec.Backups.PGBackRest.Repos, 1)
+		assert.Equal(t, `{"aws":0}`, cluster.Annotations[repoSlotMapAnnotation])
+		require.NoError(t, c.Get(&corev1.Secret{}, "pg-pgbackrest-repo1-creds"))
+		assert.True(t, apierrors.IsNotFound(c.Get(&corev1.Secret{}, "pg-pgbackrest-repo2-creds")))
+	})
+
+	t.Run("disables backups while no repo can be rendered and keeps the slot", func(t *testing.T) {
+		t.Parallel()
+
+		c := newRepoTestContext(t, backupInstance("fresh"))
+		cluster := &pgv2.PerconaPGCluster{}
+
+		require.NoError(t, applyBackupSettings(c, cluster))
+
+		require.NotNil(t, cluster.Spec.Backups.Enabled)
+		assert.False(t, *cluster.Spec.Backups.Enabled)
+		assert.Empty(t, cluster.Spec.Backups.PGBackRest.Repos)
+		assert.Equal(t, `{"fresh":0}`, cluster.Annotations[repoSlotMapAnnotation])
+	})
 }
