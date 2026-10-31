@@ -38,7 +38,6 @@ func newSeedingFixture(t *testing.T) seedingFixture {
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	repo1 := "repo1"
-	forcePathStyle := true
 	return seedingFixture{
 		scheme: scheme,
 		objects: []client.Object{
@@ -78,14 +77,14 @@ func newSeedingFixture(t *testing.T) seedingFixture {
 			&backupv1alpha1.BackupStorage{
 				ObjectMeta: metav1.ObjectMeta{Name: "minio", Namespace: "everest"},
 				Spec: backupv1alpha1.BackupStorageSpec{
-					Type: backupv1alpha1.BackupStorageTypeS3,
-					S3: &backupv1alpha1.BackupStorageS3Spec{
-						Bucket:               "backups",
-						Region:               "us-east-1",
-						EndpointURL:          "http://minio:9000",
-						ForcePathStyle:       &forcePathStyle,
-						CredentialsSecretRef: apicommon.SecretRef{Name: "minio-creds"},
+					BackupStorageClassRef: apicommon.ObjectRef{Name: "s3"},
+					Location:              backupv1alpha1.BackupStorageLocation{Bucket: "backups"},
+					Parameters:            &runtime.RawExtension{Raw: []byte(`{"region":"us-east-1","endpointURL":"https://minio:9000","forcePathStyle":true}`)},
+					Authentication: apicommon.Authentication{
+						Mode:                 "AccessKey",
+						CredentialsSecretRef: &apicommon.SecretRef{Name: "minio-creds"},
 					},
+					TLS: &apicommon.TLSConfig{InsecureSkipVerify: true},
 				},
 			},
 			&corev1.Secret{
@@ -157,10 +156,11 @@ func TestBuildDataSourceBootstrap(t *testing.T) {
 		require.NotNil(t, ds.Repo.S3)
 		assert.Equal(t, "backups", ds.Repo.S3.Bucket)
 		assert.Equal(t, "us-east-1", ds.Repo.S3.Region)
-		assert.Equal(t, "http://minio:9000", ds.Repo.S3.Endpoint)
+		assert.Equal(t, "minio:9000", ds.Repo.S3.Endpoint)
 		assert.Equal(t, []string{"--set=20260903-090125F", "--type=immediate"}, ds.Options)
-		assert.Equal(t, "/pgbackrest/src-uid/repo1", ds.Global["repo1-path"])
+		assert.Equal(t, "/backups/everest/pg-src/src-uid/minio", ds.Global["repo1-path"])
 		assert.Equal(t, "path", ds.Global["repo1-s3-uri-style"])
+		assert.Equal(t, "n", ds.Global["repo1-storage-verify-tls"])
 
 		require.Len(t, ds.Configuration, 1)
 		assert.Equal(t, bootstrap.CredentialSecret.Name, ds.Configuration[0].Secret.Name)
@@ -182,8 +182,28 @@ func TestBuildDataSourceBootstrap(t *testing.T) {
 
 		ds := bootstrap.DataSource.PGBackRest
 		assert.Equal(t, "repo1", ds.Repo.Name)
-		assert.Equal(t, "/pgbackrest/src-uid/repo1", ds.Global["repo1-path"])
+		assert.Equal(t, "/backups/everest/pg-src/src-uid/minio", ds.Global["repo1-path"])
 		assert.Equal(t, []string{"--type=time", `--target="2026-08-01 15:30:00+00:00"`}, ds.Options)
+	})
+
+	t.Run("source storage pgBackRest cannot reach is a data source configuration error", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := f.ctx(seededInstance(backupDataSource()))
+		bs := &backupv1alpha1.BackupStorage{}
+		require.NoError(t, ctx.Get(bs, "minio"))
+		bs.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"region":"us-east-1","endpointURL":"http://minio:9000"}`)}
+		bs.Spec.TLS = nil
+		require.NoError(t, ctx.Client().Update(ctx.Context(), bs))
+
+		bootstrap, pending, err := buildDataSourceBootstrap(ctx)
+
+		assert.Nil(t, bootstrap)
+		assert.Nil(t, pending)
+		dse := controller.AsDataSourceConfigError(err)
+		require.NotNil(t, dse)
+		assert.Equal(t, dataSourceReasonStorageUnusable, dse.Reason)
+		assert.Contains(t, dse.Message, "plain HTTP")
 	})
 
 	t.Run("no data source needs no bootstrap", func(t *testing.T) {

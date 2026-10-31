@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
+	"github.com/openeverest/openeverest/v2/api/backup/v1alpha1/storageclasses"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
@@ -17,6 +18,10 @@ import (
 
 // pgBackRestStanza is the stanza the operator creates for every cluster.
 const pgBackRestStanza = "db"
+
+// dataSourceReasonStorageUnusable is the DataSourceReady reason when the
+// source BackupStorage cannot be rendered as a pgBackRest repo.
+const dataSourceReasonStorageUnusable = "SourceStorageUnusable"
 
 // dataSourceBootstrap is what a new cluster needs to be created from another
 // Instance's pgBackRest repo.
@@ -129,53 +134,28 @@ func buildDataSourceBootstrap(c *controller.Context) (*dataSourceBootstrap, *con
 		return nil, nil, err
 	}
 
-	repo, global, err := buildPGBackRestRepo(*repoName, corev1alpha1.InstanceBackupStorage{}, bs, string(sourceInstance.UID))
+	// The source Instance wrote its backups under its own path; the Secret is
+	// named apart from the cluster's own repo credentials, which can use the
+	// same repo name.
+	path := storageclasses.BackupPath(bs.Spec.Location, sourceInstance.Namespace, sourceInstance.Name, sourceInstance.UID, storageName)
+	r, err := buildPGBackRestS3Repo(c, bs, *repoName, path, c.Name()+"-pgbackrest-datasource-creds")
 	if err != nil {
-		return nil, nil, err
-	}
-
-	source := &upstreamv1beta1.PGBackRestDataSource{
-		Repo:    repo,
-		Stanza:  pgBackRestStanza,
-		Options: options,
-		Global:  global,
-	}
-
-	var secret *corev1.Secret
-	if bs.Spec.S3 != nil {
-		secret, source.Configuration, err = dataSourceCredentials(c, *repoName, bs)
-		if err != nil {
-			return nil, nil, err
-		}
-		if bs.Spec.S3.ForcePathStyle != nil && *bs.Spec.S3.ForcePathStyle {
-			source.Global[*repoName+"-s3-uri-style"] = "path"
-		}
-		if bs.Spec.S3.VerifyTLS != nil && !*bs.Spec.S3.VerifyTLS {
-			source.Global[*repoName+"-storage-verify-tls"] = "n"
+		return nil, nil, &controller.DataSourceConfigError{
+			Reason:  dataSourceReasonStorageUnusable,
+			Message: fmt.Sprintf("backup storage %s: %v", storageName, err),
 		}
 	}
 
 	return &dataSourceBootstrap{
-		DataSource:       &upstreamv1beta1.DataSource{PGBackRest: source},
-		CredentialSecret: secret,
+		DataSource: &upstreamv1beta1.DataSource{PGBackRest: &upstreamv1beta1.PGBackRestDataSource{
+			Repo:          r.repo,
+			Stanza:        pgBackRestStanza,
+			Options:       options,
+			Global:        r.global,
+			Configuration: []corev1.VolumeProjection{r.projection},
+		}},
+		CredentialSecret: r.secret,
 	}, nil, nil
-}
-
-// dataSourceCredentials builds the Secret that holds the source storage
-// credentials. It is named apart from the cluster's own repo credentials,
-// which can use the same repo name.
-func dataSourceCredentials(
-	c *controller.Context,
-	repoName string,
-	bs *backupv1alpha1.BackupStorage,
-) (*corev1.Secret, []corev1.VolumeProjection, error) {
-	secret, projection, err := ensurePGBackRestCredentialSecret(c, repoName, bs)
-	if err != nil {
-		return nil, nil, err
-	}
-	secret.Name = c.Name() + "-pgbackrest-datasource-creds"
-	projection.Secret.Name = secret.Name
-	return secret, []corev1.VolumeProjection{*projection}, nil
 }
 
 // applyDataSourceBootstrap makes a new cluster start from the source repo. An

@@ -13,7 +13,7 @@ RELEASE_FULLCOMMIT ?= $(shell git rev-parse HEAD)
 CONTAINER_TOOL ?= docker
 
 # OpenEverest branch the integration tests build the controller from.
-OPENEVEREST_BRANCH ?= main
+OPENEVEREST_BRANCH ?= backup/storage-runtime
 
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/openeverest/provider-percona-postgresql-dev:latest

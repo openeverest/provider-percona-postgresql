@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"strconv"
 	"strings"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
+	"github.com/openeverest/openeverest/v2/api/backup/v1alpha1/storageclasses"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
@@ -42,6 +44,10 @@ const (
 	// repo slot indices (0-based) on the PerconaPGCluster. This prevents repo
 	// slots from shifting when storages are added or removed.
 	repoSlotMapAnnotation = "openeverest.io/repo-slot-map"
+
+	// pgBackRestConfigDirectory is where the operator mounts
+	// spec.backups.pgbackrest.configuration.
+	pgBackRestConfigDirectory = "/etc/pgbackrest/conf.d"
 )
 
 // Mirror implements controller.BackupMirror (optional). The runtime invokes
@@ -264,116 +270,53 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 		return &controller.BackupConfigError{Reason: "BackupImageUnavailable", Message: "cannot resolve default pgbackrest image from provider versions catalog"}
 	}
 
-	backupsEnabled := true
-	pgCluster.Spec.Backups.Enabled = &backupsEnabled
 	pgCluster.Spec.Backups.PGBackRest.Image = pgBackRestImage
 
 	if len(c.Instance().Spec.Backup.Storages) == 0 {
 		return &controller.BackupConfigError{Reason: "NoStoragesConfigured", Message: "spec.backup.enabled=true requires at least one storage"}
 	}
-
-	// Build a stable slot assignment: read existing mapping from the annotation
-	// on the LIVE PGCluster (not the fresh in-memory one we're building), then
-	// preserve slots for storages that still exist and assign free slots to new ones.
-	existingCluster := &pgv2.PerconaPGCluster{}
-	if err := c.Get(existingCluster, c.Instance().Name); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("get existing PerconaPGCluster for slot map: %w", err)
-	}
-	slotMap := loadRepoSlotMap(existingCluster)
-	slotMap = reconcileRepoSlotMap(slotMap, c.Instance().Spec.Backup.Storages)
-
-	var repos []upstreamv1beta1.PGBackRestRepo
-	var configurations []corev1.VolumeProjection
-	globalConfig := make(map[string]string)
 	for _, storage := range c.Instance().Spec.Backup.Storages {
 		if storage.StorageRef.Name == "" {
 			return &controller.BackupConfigError{Reason: "StorageReferenceMissing", Message: fmt.Sprintf("backup storage %q must set storageRef.name", storage.StorageRef.Name)}
 		}
+	}
 
-		slot, ok := slotMap[storage.StorageRef.Name]
-		if !ok {
-			return &controller.BackupConfigError{Reason: "SlotAssignmentFailed", Message: fmt.Sprintf("no repo slot assigned for storage %q", storage.StorageRef.Name)}
-		}
-		repoName := pgBackRestRepoName(slot)
+	// Build a stable slot assignment: read existing mapping from the annotation
+	// on the LIVE PGCluster (not the fresh in-memory one we're building), then
+	// preserve slots for storages that still exist and assign free slots to new ones.
+	live := &pgv2.PerconaPGCluster{}
+	if err := c.Get(live, c.Instance().Name); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("get existing PerconaPGCluster for slot map: %w", err)
+	}
+	slotMap := reconcileRepoSlotMap(loadRepoSlotMap(live), c.Instance().Spec.Backup.Storages)
 
-		bs, err := c.BackupStorage(storage.StorageRef.Name)
-		if err != nil {
-			return &controller.BackupConfigError{Reason: "StorageNotFound", Message: err.Error()}
-		}
-
-		repo, repoGlobal, err := buildPGBackRestRepo(repoName, storage, bs, string(c.Instance().UID))
-		if err != nil {
-			return err
-		}
-
-		// Merge repo-specific global config.
-		for k, v := range repoGlobal {
-			globalConfig[k] = v
-		}
-
-		// Apply schedules to the repo.
-		if len(storage.Schedules) > 0 {
-			schedules := buildPGBackRestSchedules(storage.Schedules)
-			repo.BackupSchedules = schedules
-
-			// Apply retention settings from each schedule to the pgBackRest
-			// global config. pgBackRest supports per-repo retention via keys
-			// like "repo1-retention-full", "repo1-retention-diff".
-			if err := applyRetentionConfig(globalConfig, repoName, storage.Schedules); err != nil {
-				return &controller.BackupConfigError{Reason: "RetentionTypeUnsupported", Message: err.Error()}
-			}
-		}
-
-		repos = append(repos, repo)
-
-		// Configure S3 credentials and options for the repo.
-		if bs.Spec.Type == backupv1alpha1.BackupStorageTypeS3 && bs.Spec.S3 != nil {
-			credSecret, projection, err := ensurePGBackRestCredentialSecret(c, repoName, bs)
-			if err != nil {
-				return err
-			}
-			if credSecret != nil {
-				if err := c.Apply(credSecret); err != nil {
-					return fmt.Errorf("apply pgBackRest credential secret for storage %q: %w", storage.StorageRef.Name, err)
-				}
-			}
-			if projection != nil {
-				configurations = append(configurations, *projection)
-			}
-
-			// Handle ForcePathStyle — pgBackRest calls this "uri-style".
-			if bs.Spec.S3.ForcePathStyle != nil && *bs.Spec.S3.ForcePathStyle {
-				globalConfig[repoName+"-s3-uri-style"] = "path"
-			}
-
-			// Handle VerifyTLS — pgBackRest calls this "storage-verify-tls".
-			if bs.Spec.S3.VerifyTLS != nil && !*bs.Spec.S3.VerifyTLS {
-				globalConfig[repoName+"-storage-verify-tls"] = "n"
-			}
+	rendered, err := buildPGBackRestRepos(c, live, slotMap)
+	if err != nil {
+		return err
+	}
+	for _, secret := range rendered.secrets {
+		if err := c.Apply(secret); err != nil {
+			return fmt.Errorf("apply pgBackRest credential secret %q: %w", secret.Name, err)
 		}
 	}
 
-	pgCluster.Spec.Backups.PGBackRest.Repos = repos
+	// The operator requires at least one repo while backups are enabled.
+	backupsEnabled := len(rendered.repos) > 0
+	pgCluster.Spec.Backups.Enabled = &backupsEnabled
 
-	// Replace configurations entirely so removed repos don't leave stale secret projections.
-	pgCluster.Spec.Backups.PGBackRest.Configuration = configurations
-
-	// Replace global config entirely so removed repos don't leave stale entries.
-	pgCluster.Spec.Backups.PGBackRest.Global = globalConfig
+	// Replace repos, configurations and global config entirely so removed
+	// repos don't leave stale entries behind.
+	pgCluster.Spec.Backups.PGBackRest.Repos = rendered.repos
+	pgCluster.Spec.Backups.PGBackRest.Configuration = rendered.configuration
+	pgCluster.Spec.Backups.PGBackRest.Global = rendered.global
 
 	// Persist the stable slot map annotation.
 	saveRepoSlotMap(pgCluster, slotMap)
 
-	// Clean up orphaned credential secrets for repos that no longer exist.
-	activeSecrets := make(map[string]struct{}, len(c.Instance().Spec.Backup.Storages))
-	for _, storage := range c.Instance().Spec.Backup.Storages {
-		if slot, ok := slotMap[storage.StorageRef.Name]; ok {
-			activeSecrets[pgBackRestCredentialSecretName(c.Instance().Name, pgBackRestRepoName(slot))] = struct{}{}
-		}
-	}
+	// Clean up credential secrets the configuration no longer mounts.
 	for i := 0; i < maxPGBackRestRepos; i++ {
 		secretName := pgBackRestCredentialSecretName(c.Instance().Name, pgBackRestRepoName(i))
-		if _, active := activeSecrets[secretName]; active {
+		if _, mounted := rendered.secretNames[secretName]; mounted {
 			continue
 		}
 		orphan := &corev1.Secret{
@@ -493,94 +436,156 @@ func pgBackRestCredentialSecretName(instanceName, storageName string) string {
 	return instanceName + "-pgbackrest-" + storageName + "-creds"
 }
 
-// ensurePGBackRestCredentialSecret builds a Secret containing pgBackRest-formatted
-// S3 credentials and a matching VolumeProjection to mount it. The caller is
-// responsible for applying the Secret to the cluster.
-func ensurePGBackRestCredentialSecret(
-	c *controller.Context,
-	repoName string,
-	bs *backupv1alpha1.BackupStorage,
-) (*corev1.Secret, *corev1.VolumeProjection, error) {
-	accessKey, secretKey, err := c.BackupStorageCredentials(bs)
+// pgBackRestRepos is the pgBackRest configuration of an Instance's backup
+// storages.
+type pgBackRestRepos struct {
+	repos         []upstreamv1beta1.PGBackRestRepo
+	configuration []corev1.VolumeProjection
+	global        map[string]string
+	// secrets are the credential Secrets to apply.
+	secrets []*corev1.Secret
+	// secretNames are the credential Secrets configuration mounts.
+	secretNames map[string]struct{}
+}
+
+// buildPGBackRestRepos renders every spec.backup.storages entry as the
+// pgBackRest repo of its slot. An entry that must not be rendered keeps the
+// repo, repoN-* options and credentials projection the live cluster has for
+// it, and is left out while the live cluster has none.
+func buildPGBackRestRepos(c *controller.Context, live *pgv2.PerconaPGCluster, slotMap repoSlotMap) (pgBackRestRepos, error) {
+	storages, err := c.BackupStorages()
 	if err != nil {
-		return nil, nil, &controller.BackupConfigError{
-			Reason:  "CredentialsUnavailable",
-			Message: fmt.Sprintf("cannot read credentials for BackupStorage %q: %v", bs.Name, err),
+		return pgBackRestRepos{}, fmt.Errorf("resolve backup storages: %w", err)
+	}
+	liveSlots := loadRepoSlotMap(live)
+	out := pgBackRestRepos{global: map[string]string{}, secretNames: map[string]struct{}{}}
+	for _, s := range storages {
+		slot, ok := slotMap[s.Name()]
+		if !ok {
+			return pgBackRestRepos{}, &controller.BackupConfigError{Reason: "SlotAssignmentFailed", Message: fmt.Sprintf("no repo slot assigned for storage %q", s.Name())}
+		}
+		repoName := pgBackRestRepoName(slot)
+		secretName := pgBackRestCredentialSecretName(c.Name(), repoName)
+
+		if s.Apply() {
+			r, err := buildPGBackRestS3Repo(c, s.Storage, repoName, s.Path, secretName)
+			if err == nil {
+				if len(s.Entry.Schedules) > 0 {
+					r.repo.BackupSchedules = buildPGBackRestSchedules(s.Entry.Schedules)
+					if err := applyRetentionConfig(r.global, repoName, s.Entry.Schedules); err != nil {
+						return pgBackRestRepos{}, &controller.BackupConfigError{Reason: "RetentionTypeUnsupported", Message: err.Error()}
+					}
+				}
+				out.repos = append(out.repos, r.repo)
+				maps.Copy(out.global, r.global)
+				out.configuration = append(out.configuration, r.projection)
+				out.secrets = append(out.secrets, r.secret)
+				out.secretNames[secretName] = struct{}{}
+				continue
+			}
+			c.RejectBackupStorage(s.Name(), err)
+		}
+
+		if liveSlot, onLive := liveSlots[s.Name()]; onLive && liveSlot == slot {
+			out.hold(live, repoName, secretName)
 		}
 	}
-	if accessKey == "" || secretKey == "" {
-		return nil, nil, &controller.BackupConfigError{
-			Reason:  "CredentialsUnavailable",
-			Message: fmt.Sprintf("BackupStorage %q credentials secret is missing AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY", bs.Name),
+	return out, nil
+}
+
+// hold copies what the live cluster has for the repo repoName.
+func (r *pgBackRestRepos) hold(live *pgv2.PerconaPGCluster, repoName, secretName string) {
+	pgBackRest := live.Spec.Backups.PGBackRest
+	for _, repo := range pgBackRest.Repos {
+		if repo.Name == repoName {
+			r.repos = append(r.repos, repo)
 		}
 	}
+	for k, v := range pgBackRest.Global {
+		if strings.HasPrefix(k, repoName+"-") {
+			r.global[k] = v
+		}
+	}
+	for _, projection := range pgBackRest.Configuration {
+		if projection.Secret != nil && projection.Secret.Name == secretName {
+			r.configuration = append(r.configuration, projection)
+			r.secretNames[secretName] = struct{}{}
+		}
+	}
+}
 
-	// Build a pgBackRest INI config fragment with the S3 credentials.
-	configKey := repoName + "-s3-credentials.conf"
-	configData := fmt.Sprintf("[global]\n%s-s3-key=%s\n%s-s3-key-secret=%s\n", repoName, accessKey, repoName, secretKey)
+// pgBackRestS3Repo is a pgBackRest repo on an s3 BackupStorage, with the
+// Secret pgBackRest reads its credentials and CA from.
+type pgBackRestS3Repo struct {
+	repo       upstreamv1beta1.PGBackRestRepo
+	global     map[string]string
+	secret     *corev1.Secret
+	projection corev1.VolumeProjection
+}
 
-	secretName := pgBackRestCredentialSecretName(c.Instance().Name, repoName)
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: c.Instance().Namespace,
-		},
-		StringData: map[string]string{
-			configKey: configData,
-		},
+// buildPGBackRestS3Repo renders the s3 BackupStorage bs as the pgBackRest
+// repo repoName, writing under path in the bucket and reading its
+// credentials and CA from the Secret secretName.
+func buildPGBackRestS3Repo(c *controller.Context, bs *backupv1alpha1.BackupStorage, repoName, path, secretName string) (pgBackRestS3Repo, error) {
+	s3, creds, err := c.BackupStorageS3(bs)
+	if err != nil {
+		return pgBackRestS3Repo{}, err
+	}
+	if s3.EffectiveImplementation() == storageclasses.S3ImplementationGCS {
+		return pgBackRestS3Repo{}, fmt.Errorf("pgBackRest cannot use GCS through its S3 API: %w", controller.ErrImplementationUnsupported)
+	}
+	endpoint, err := s3.Endpoint()
+	if err != nil {
+		return pgBackRestS3Repo{}, err
+	}
+	if !endpoint.Secure {
+		return pgBackRestS3Repo{}, fmt.Errorf("pgBackRest cannot reach S3 over plain HTTP: %w", storageclasses.ErrUnsupportedParameter)
+	}
+	tls, err := c.BackupStorageTLS(bs, controller.TLSSupport{CustomCA: true, SkipVerify: true})
+	if err != nil {
+		return pgBackRestS3Repo{}, err
 	}
 
-	projection := &corev1.VolumeProjection{
-		Secret: &corev1.SecretProjection{
-			LocalObjectReference: corev1.LocalObjectReference{
-				Name: secretName,
+	host := endpoint.HostPort()
+	// pgBackRest connects to port 443 unless the endpoint names another.
+	if endpoint.Port == 443 && !strings.Contains(endpoint.Host, ":") {
+		host = endpoint.Host
+	}
+	r := pgBackRestS3Repo{
+		repo: upstreamv1beta1.PGBackRestRepo{
+			Name: repoName,
+			S3: &upstreamv1beta1.RepoS3{
+				Bucket:   bs.Spec.Location.Bucket,
+				Endpoint: host,
+				Region:   s3.Region,
 			},
 		},
+		global: map[string]string{repoName + "-path": "/" + path},
+	}
+	if s3.ForcePathStyle {
+		r.global[repoName+"-s3-uri-style"] = "path"
+	}
+	if tls.InsecureSkipVerify {
+		r.global[repoName+"-storage-verify-tls"] = "n"
 	}
 
-	return secret, projection, nil
-}
-
-// buildPGBackRestRepo creates a pgBackRest repo configuration from an OpenEverest storage spec.
-func buildPGBackRestRepo(
-	repoName string,
-	storage corev1alpha1.InstanceBackupStorage,
-	bs *backupv1alpha1.BackupStorage,
-	instanceUID string,
-) (upstreamv1beta1.PGBackRestRepo, map[string]string, error) {
-	repo := upstreamv1beta1.PGBackRestRepo{
-		Name: repoName,
+	data := map[string]string{
+		repoName + "-s3-credentials.conf": fmt.Sprintf("[global]\n%s-s3-key=%s\n%s-s3-key-secret=%s\n",
+			repoName, creds.AccessKeyID, repoName, creds.SecretAccessKey),
 	}
-	repoGlobal := make(map[string]string)
-
-	switch bs.Spec.Type {
-	case backupv1alpha1.BackupStorageTypeS3:
-		if bs.Spec.S3 == nil {
-			return repo, nil, &controller.BackupConfigError{Reason: "StorageTypeUnsupported", Message: fmt.Sprintf("BackupStorage %q has type s3 but missing s3 config", bs.Name)}
-		}
-		bucket := resolveBackupBucket(bs.Spec.S3.Bucket)
-		repo.S3 = &upstreamv1beta1.RepoS3{
-			Bucket:   bucket,
-			Region:   bs.Spec.S3.Region,
-			Endpoint: bs.Spec.S3.EndpointURL,
-		}
-		// Use instance UID as a path prefix so different instances don't
-		// collide when sharing the same bucket.
-		if instanceUID != "" {
-			repoGlobal[repoName+"-path"] = pgBackRestRepoPath(instanceUID, repoName)
-		}
-	default:
-		return repo, nil, &controller.BackupConfigError{Reason: "StorageTypeUnsupported", Message: fmt.Sprintf("BackupStorage %q type %q is not supported; only s3 is supported", bs.Name, bs.Spec.Type)}
+	if tls.CA != nil {
+		caKey := repoName + "-storage-ca.crt"
+		data[caKey] = string(tls.CA)
+		r.global[repoName+"-storage-ca-file"] = pgBackRestConfigDirectory + "/" + caKey
 	}
-
-	return repo, repoGlobal, nil
-}
-
-// pgBackRestRepoPath is the object-storage prefix used for a cluster's repo.
-// Instance UID keeps backups from different instances from colliding in a
-// shared bucket.
-func pgBackRestRepoPath(instanceUID, repoName string) string {
-	return fmt.Sprintf("/pgbackrest/%s/%s", instanceUID, repoName)
+	r.secret = &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: c.Namespace()},
+		StringData: data,
+	}
+	r.projection = corev1.VolumeProjection{
+		Secret: &corev1.SecretProjection{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}},
+	}
+	return r, nil
 }
 
 func buildPGBackRestSchedules(schedules []corev1alpha1.InstanceBackupSchedule) *upstreamv1beta1.PGBackRestBackupSchedules {
@@ -676,10 +681,6 @@ func pgBackRestRetention(r *corev1alpha1.BackupScheduleRetention) (value, retent
 	default:
 		return "", "", fmt.Errorf("unsupported retention type %q", r.Type)
 	}
-}
-
-func resolveBackupBucket(storageBucket string) string {
-	return strings.Trim(storageBucket, "/")
 }
 
 // OperatorBackupType implements controller.BackupMirror (optional).

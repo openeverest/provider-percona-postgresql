@@ -30,7 +30,7 @@ permissions:
 
 env:
   IMG: provider-percona-postgresql:ci
-  OPENEVEREST_BRANCH: main
+  OPENEVEREST_BRANCH: backup/storage-runtime
 
 jobs:
   run:
