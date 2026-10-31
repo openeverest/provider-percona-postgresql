@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
+	"github.com/openeverest/openeverest/v2/api/backup/v1alpha1/storageclasses"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
@@ -128,11 +129,12 @@ func buildDataSourceBootstrap(c *controller.Context) (*dataSourceBootstrap, *con
 	if err != nil {
 		return nil, nil, err
 	}
-
-	repo, global, err := buildPGBackRestRepo(*repoName, corev1alpha1.InstanceBackupStorage{}, bs, string(sourceInstance.UID))
+	s3, creds, err := c.BackupStorageS3(bs)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	repo, global := buildPGBackRestRepo(*repoName, bs.Spec.Location.Bucket, s3, string(sourceInstance.UID))
 
 	source := &upstreamv1beta1.PGBackRestDataSource{
 		Repo:    repo,
@@ -141,18 +143,13 @@ func buildDataSourceBootstrap(c *controller.Context) (*dataSourceBootstrap, *con
 		Global:  global,
 	}
 
-	var secret *corev1.Secret
-	if bs.Spec.S3 != nil {
-		secret, source.Configuration, err = dataSourceCredentials(c, *repoName, bs)
-		if err != nil {
-			return nil, nil, err
-		}
-		if bs.Spec.S3.ForcePathStyle != nil && *bs.Spec.S3.ForcePathStyle {
-			source.Global[*repoName+"-s3-uri-style"] = "path"
-		}
-		if bs.Spec.S3.VerifyTLS != nil && !*bs.Spec.S3.VerifyTLS {
-			source.Global[*repoName+"-storage-verify-tls"] = "n"
-		}
+	secret, configuration := dataSourceCredentials(c, *repoName, creds)
+	source.Configuration = configuration
+	if s3.ForcePathStyle {
+		source.Global[*repoName+"-s3-uri-style"] = "path"
+	}
+	if bs.Spec.TLS != nil && bs.Spec.TLS.InsecureSkipVerify {
+		source.Global[*repoName+"-storage-verify-tls"] = "n"
 	}
 
 	return &dataSourceBootstrap{
@@ -167,15 +164,12 @@ func buildDataSourceBootstrap(c *controller.Context) (*dataSourceBootstrap, *con
 func dataSourceCredentials(
 	c *controller.Context,
 	repoName string,
-	bs *backupv1alpha1.BackupStorage,
-) (*corev1.Secret, []corev1.VolumeProjection, error) {
-	secret, projection, err := ensurePGBackRestCredentialSecret(c, repoName, bs)
-	if err != nil {
-		return nil, nil, err
-	}
+	creds storageclasses.S3Credentials,
+) (*corev1.Secret, []corev1.VolumeProjection) {
+	secret, projection := ensurePGBackRestCredentialSecret(c, repoName, creds)
 	secret.Name = c.Name() + "-pgbackrest-datasource-creds"
 	projection.Secret.Name = secret.Name
-	return secret, []corev1.VolumeProjection{*projection}, nil
+	return secret, []corev1.VolumeProjection{*projection}
 }
 
 // applyDataSourceBootstrap makes a new cluster start from the source repo. An

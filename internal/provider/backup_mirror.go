@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
+	"github.com/openeverest/openeverest/v2/api/backup/v1alpha1/storageclasses"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
@@ -300,11 +301,12 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 		if err != nil {
 			return &controller.BackupConfigError{Reason: "StorageNotFound", Message: err.Error()}
 		}
-
-		repo, repoGlobal, err := buildPGBackRestRepo(repoName, storage, bs, string(c.Instance().UID))
+		s3, creds, err := c.BackupStorageS3(bs)
 		if err != nil {
-			return err
+			return &controller.BackupConfigError{Reason: "CredentialsUnavailable", Message: err.Error()}
 		}
+
+		repo, repoGlobal := buildPGBackRestRepo(repoName, bs.Spec.Location.Bucket, s3, string(c.Instance().UID))
 
 		// Merge repo-specific global config.
 		for k, v := range repoGlobal {
@@ -327,29 +329,20 @@ func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster
 		repos = append(repos, repo)
 
 		// Configure S3 credentials and options for the repo.
-		if bs.Spec.Type == backupv1alpha1.BackupStorageTypeS3 && bs.Spec.S3 != nil {
-			credSecret, projection, err := ensurePGBackRestCredentialSecret(c, repoName, bs)
-			if err != nil {
-				return err
-			}
-			if credSecret != nil {
-				if err := c.Apply(credSecret); err != nil {
-					return fmt.Errorf("apply pgBackRest credential secret for storage %q: %w", storage.StorageRef.Name, err)
-				}
-			}
-			if projection != nil {
-				configurations = append(configurations, *projection)
-			}
+		credSecret, projection := ensurePGBackRestCredentialSecret(c, repoName, creds)
+		if err := c.Apply(credSecret); err != nil {
+			return fmt.Errorf("apply pgBackRest credential secret for storage %q: %w", storage.StorageRef.Name, err)
+		}
+		configurations = append(configurations, *projection)
 
-			// Handle ForcePathStyle — pgBackRest calls this "uri-style".
-			if bs.Spec.S3.ForcePathStyle != nil && *bs.Spec.S3.ForcePathStyle {
-				globalConfig[repoName+"-s3-uri-style"] = "path"
-			}
+		// Handle ForcePathStyle — pgBackRest calls this "uri-style".
+		if s3.ForcePathStyle {
+			globalConfig[repoName+"-s3-uri-style"] = "path"
+		}
 
-			// Handle VerifyTLS — pgBackRest calls this "storage-verify-tls".
-			if bs.Spec.S3.VerifyTLS != nil && !*bs.Spec.S3.VerifyTLS {
-				globalConfig[repoName+"-storage-verify-tls"] = "n"
-			}
+		// Handle InsecureSkipVerify — pgBackRest calls this "storage-verify-tls".
+		if bs.Spec.TLS != nil && bs.Spec.TLS.InsecureSkipVerify {
+			globalConfig[repoName+"-storage-verify-tls"] = "n"
 		}
 	}
 
@@ -499,25 +492,11 @@ func pgBackRestCredentialSecretName(instanceName, storageName string) string {
 func ensurePGBackRestCredentialSecret(
 	c *controller.Context,
 	repoName string,
-	bs *backupv1alpha1.BackupStorage,
-) (*corev1.Secret, *corev1.VolumeProjection, error) {
-	accessKey, secretKey, err := c.BackupStorageCredentials(bs)
-	if err != nil {
-		return nil, nil, &controller.BackupConfigError{
-			Reason:  "CredentialsUnavailable",
-			Message: fmt.Sprintf("cannot read credentials for BackupStorage %q: %v", bs.Name, err),
-		}
-	}
-	if accessKey == "" || secretKey == "" {
-		return nil, nil, &controller.BackupConfigError{
-			Reason:  "CredentialsUnavailable",
-			Message: fmt.Sprintf("BackupStorage %q credentials secret is missing AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY", bs.Name),
-		}
-	}
-
+	creds storageclasses.S3Credentials,
+) (*corev1.Secret, *corev1.VolumeProjection) {
 	// Build a pgBackRest INI config fragment with the S3 credentials.
 	configKey := repoName + "-s3-credentials.conf"
-	configData := fmt.Sprintf("[global]\n%s-s3-key=%s\n%s-s3-key-secret=%s\n", repoName, accessKey, repoName, secretKey)
+	configData := fmt.Sprintf("[global]\n%s-s3-key=%s\n%s-s3-key-secret=%s\n", repoName, creds.AccessKeyID, repoName, creds.SecretAccessKey)
 
 	secretName := pgBackRestCredentialSecretName(c.Instance().Name, repoName)
 	secret := &corev1.Secret{
@@ -538,42 +517,32 @@ func ensurePGBackRestCredentialSecret(
 		},
 	}
 
-	return secret, projection, nil
+	return secret, projection
 }
 
 // buildPGBackRestRepo creates a pgBackRest repo configuration from an OpenEverest storage spec.
 func buildPGBackRestRepo(
 	repoName string,
-	storage corev1alpha1.InstanceBackupStorage,
-	bs *backupv1alpha1.BackupStorage,
+	bucket string,
+	s3 storageclasses.S3,
 	instanceUID string,
-) (upstreamv1beta1.PGBackRestRepo, map[string]string, error) {
+) (upstreamv1beta1.PGBackRestRepo, map[string]string) {
 	repo := upstreamv1beta1.PGBackRestRepo{
 		Name: repoName,
+		S3: &upstreamv1beta1.RepoS3{
+			Bucket:   resolveBackupBucket(bucket),
+			Region:   s3.Region,
+			Endpoint: s3.EndpointURL,
+		},
 	}
 	repoGlobal := make(map[string]string)
-
-	switch bs.Spec.Type {
-	case backupv1alpha1.BackupStorageTypeS3:
-		if bs.Spec.S3 == nil {
-			return repo, nil, &controller.BackupConfigError{Reason: "StorageTypeUnsupported", Message: fmt.Sprintf("BackupStorage %q has type s3 but missing s3 config", bs.Name)}
-		}
-		bucket := resolveBackupBucket(bs.Spec.S3.Bucket)
-		repo.S3 = &upstreamv1beta1.RepoS3{
-			Bucket:   bucket,
-			Region:   bs.Spec.S3.Region,
-			Endpoint: bs.Spec.S3.EndpointURL,
-		}
-		// Use instance UID as a path prefix so different instances don't
-		// collide when sharing the same bucket.
-		if instanceUID != "" {
-			repoGlobal[repoName+"-path"] = pgBackRestRepoPath(instanceUID, repoName)
-		}
-	default:
-		return repo, nil, &controller.BackupConfigError{Reason: "StorageTypeUnsupported", Message: fmt.Sprintf("BackupStorage %q type %q is not supported; only s3 is supported", bs.Name, bs.Spec.Type)}
+	// Use instance UID as a path prefix so different instances don't
+	// collide when sharing the same bucket.
+	if instanceUID != "" {
+		repoGlobal[repoName+"-path"] = pgBackRestRepoPath(instanceUID, repoName)
 	}
 
-	return repo, repoGlobal, nil
+	return repo, repoGlobal
 }
 
 // pgBackRestRepoPath is the object-storage prefix used for a cluster's repo.

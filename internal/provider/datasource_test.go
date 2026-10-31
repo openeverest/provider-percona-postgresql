@@ -38,7 +38,6 @@ func newSeedingFixture(t *testing.T) seedingFixture {
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	repo1 := "repo1"
-	forcePathStyle := true
 	return seedingFixture{
 		scheme: scheme,
 		objects: []client.Object{
@@ -78,13 +77,12 @@ func newSeedingFixture(t *testing.T) seedingFixture {
 			&backupv1alpha1.BackupStorage{
 				ObjectMeta: metav1.ObjectMeta{Name: "minio", Namespace: "everest"},
 				Spec: backupv1alpha1.BackupStorageSpec{
-					Type: backupv1alpha1.BackupStorageTypeS3,
-					S3: &backupv1alpha1.BackupStorageS3Spec{
-						Bucket:               "backups",
-						Region:               "us-east-1",
-						EndpointURL:          "http://minio:9000",
-						ForcePathStyle:       &forcePathStyle,
-						CredentialsSecretRef: apicommon.SecretRef{Name: "minio-creds"},
+					BackupStorageClassRef: apicommon.ObjectRef{Name: "s3"},
+					Location:              backupv1alpha1.BackupStorageLocation{Bucket: "backups"},
+					Parameters:            &runtime.RawExtension{Raw: []byte(`{"region":"us-east-1","endpointURL":"http://minio:9000","forcePathStyle":true}`)},
+					Authentication: apicommon.Authentication{
+						Mode:                 "AccessKey",
+						CredentialsSecretRef: &apicommon.SecretRef{Name: "minio-creds"},
 					},
 				},
 			},
