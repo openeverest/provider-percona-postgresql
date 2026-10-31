@@ -12,15 +12,21 @@ kind: BackupStorage
 metadata:
   name: seaweedfs-storage
 spec:
-  type: s3
-  s3:
+  backupStorageClassRef:
+    name: s3
+  location:
     bucket: everest-operator
+  parameters:
     region: us-east-1
     endpointURL: https://seaweedfs.seaweedfs.svc
     forcePathStyle: true
+    implementation: other
+  authentication:
+    mode: AccessKey
     credentialsSecretRef:
       name: seaweedfs-credentials
-    verifyTLS: false
+  tls:
+    insecureSkipVerify: true
 ---
 apiVersion: backup.openeverest.io/v1alpha1
 kind: BackupClass
@@ -29,6 +35,10 @@ metadata:
 spec:
   displayName: Percona Backup for PostgreSQL
   executionMode: ProviderManaged
+  backupStorageClasses:
+    - name: s3
+      authModes:
+        - AccessKey
   supportedProviders:
     - provider-percona-postgresql
   providerManaged:
