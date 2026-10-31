@@ -1004,7 +1004,7 @@ func TestAutoRegisterStorage_RegistersNewStorage(t *testing.T) {
 	backupStorage := &backupv1alpha1.BackupStorage{
 		ObjectMeta: metav1.ObjectMeta{Name: "new-storage", Namespace: "default"},
 		Spec: backupv1alpha1.BackupStorageSpec{
-			Type: backupv1alpha1.BackupStorageTypeS3,
+			BackupStorageClassRef: apicommon.ObjectRef{Name: "s3"},
 		},
 	}
 
@@ -1094,7 +1094,7 @@ func TestAutoRegisterStorage_RespectsMaxRepos(t *testing.T) {
 
 	backupStorage := &backupv1alpha1.BackupStorage{
 		ObjectMeta: metav1.ObjectMeta{Name: "s5", Namespace: "default"},
-		Spec:       backupv1alpha1.BackupStorageSpec{Type: backupv1alpha1.BackupStorageTypeS3},
+		Spec:       backupv1alpha1.BackupStorageSpec{BackupStorageClassRef: apicommon.ObjectRef{Name: "s3"}},
 	}
 
 	k8sClient := fake.NewClientBuilder().
