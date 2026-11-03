@@ -11,6 +11,13 @@
 - apiGroups:
     - ""
   resources:
+    - pods/exec
+  verbs:
+    - create
+    - get
+- apiGroups:
+    - ""
+  resources:
     - secrets
   verbs:
     - create
