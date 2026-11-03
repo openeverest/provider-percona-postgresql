@@ -174,6 +174,10 @@ func (p *Provider) Validate(c *controller.Context) error {
 		if proxy.Image == "" && proxyVersion == "" && controller.GetDefaultImage(providerSpec, componentTypePGBouncer) == "" {
 			errs = append(errs, "cannot resolve pgbouncer image: set proxy.image or proxy.version, or configure a default pgbouncer image in provider versions catalog")
 		}
+
+		if err := validateProxyConfiguration(proxy); err != nil {
+			errs = append(errs, err.Error())
+		}
 	}
 
 	if controller.GetDefaultImage(providerSpec, componentTypePGBackRest) == "" {
@@ -320,6 +324,10 @@ func (p *Provider) Sync(c *controller.Context) error {
 	applyServiceExpose(cluster, engine, proxy)
 
 	if err := applyEngineConfiguration(c, cluster); err != nil {
+		return err
+	}
+
+	if err := applyProxyConfiguration(cluster, proxy); err != nil {
 		return err
 	}
 
