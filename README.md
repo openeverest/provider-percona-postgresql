@@ -69,7 +69,7 @@ provider itself is covered under [Installation](#installation).
 | Custom configuration | ✅ | `spec.components.engine.parameters.configuration` — see [Custom PostgreSQL configuration](#custom-postgresql-configuration) |
 | Exposure | ✅ | `spec.components.proxy.service.serviceType`: `ClusterIP` (default), `LoadBalancer` or `NodePort`; applies to pgBouncer, so it needs `proxy.replicas` ≥ 1 |
 | Monitoring | ✅ | PMM 3, via a `spec.monitoring.destinations` entry naming a `MonitoringDestination` of a `pmm` class |
-| TLS | ⚠️ | the operator provisions certificates; nothing is exposed through the Instance API |
+| TLS | ✅ | on by default; generated, or your own certificates — see [TLS](#tls) |
 
 Stateful workloads additionally report:
 
@@ -206,6 +206,41 @@ covered in [Custom PostgreSQL configuration](#custom-postgresql-configuration).
 
 When the instance sends to a PMM destination, its PostgreSQL metrics in PMM carry `namespace`
 and `core_openeverest_io_instance` labels, so they can be queried per instance.
+
+### TLS
+
+TLS is on by default. Configure it with the instance-wide `tls` parameter:
+
+```yaml
+spec:
+  parameters:
+    tls:
+      mode: requireTLS                            # preferTLS (default) | requireTLS
+      # Bring your own certificates, or leave empty to have the operator issue them:
+      certificateSecretName: my-tls                # tls.crt, tls.key and ca.crt
+      replicationCertificateSecretName: my-tls-repl # same ca.crt, for members
+      # Or bring your own CA instead, and let the operator issue certificates
+      # signed by it (mutually exclusive with certificateSecretName):
+      # rootCASecretName: my-ca                     # root.crt and root.key
+```
+
+- **`preferTLS`** (default) lets clients connect to PostgreSQL directly with or without TLS.
+  pgBouncer always requires TLS from clients regardless of mode, so most deployments — which
+  go through pgBouncer — are unaffected by this setting. **`requireTLS`** rejects any
+  non-TLS connection, direct or through pgBouncer.
+- **Certificates** are, in order of precedence:
+  1. your secrets: `certificateSecretName` and `replicationCertificateSecretName`, which must
+     share the same `ca.crt`. Their subject alternative names must cover the instance's
+     service and pod names. The operator never replaces these secrets with its own;
+  2. a CA you provide (`rootCASecretName`): the operator issues certificates signed by it;
+  3. otherwise the operator issues them: through cert-manager when it is installed, or else
+     from a CA it generates once.
+
+  The certificate source can't be changed after creation, as a new CA would stop existing
+  clients and members from trusting the instance.
+- **Clients** need only the CA to verify the instance: the connection secret
+  (`.status.connectionSecretRef.name`) carries it as `ca.crt`, and its `uri` sets `sslmode`
+  to match the mode and how clients reach the instance.
 
 ## Development
 
