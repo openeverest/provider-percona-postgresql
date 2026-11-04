@@ -1,0 +1,20 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-tls
+status:
+  phase: Failed
+---
+# The operator CR must keep the original certificate secrets: the provider
+# must not apply the rejected change.
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: test-pg-tls
+spec:
+  secrets:
+    customTLSSecret:
+      name: test-pg-tls-certs
+    customReplicationTLSSecret:
+      name: test-pg-tls-repl
+

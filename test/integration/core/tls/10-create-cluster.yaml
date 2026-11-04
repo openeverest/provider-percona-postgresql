@@ -1,0 +1,22 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-tls
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  components:
+    engine:
+      type: postgresql
+      replicas: 3
+      storage:
+        size: 25Gi
+    proxy:
+      type: pgbouncer
+      replicas: 1
+  parameters:
+    tls:
+      mode: requireTLS
+      certificateSecretName: test-pg-tls-certs
+      replicationCertificateSecretName: test-pg-tls-repl
+

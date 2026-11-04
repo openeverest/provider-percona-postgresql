@@ -1,0 +1,27 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-tls
+spec:
+  parameters:
+    tls:
+      mode: requireTLS
+      certificateSecretName: pg-tls-certs
+      replicationCertificateSecretName: pg-tls-repl
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: pg-tls
+spec:
+  tlsOnly: true
+  secrets:
+    customTLSSecret:
+      name: pg-tls-certs
+    customReplicationTLSSecret:
+      name: pg-tls-repl
+  proxy:
+    pgBouncer:
+      customTLSSecret:
+        name: pg-tls-certs
+
