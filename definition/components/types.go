@@ -9,9 +9,19 @@
 package components
 
 // PgbouncerParameters defines custom parameters for pgbouncer components.
-// Add fields here when the pgbouncer component type needs custom parameters
-// beyond what the base Instance spec provides.
-type PgbouncerParameters struct{}
+type PgbouncerParameters struct {
+	// Configuration allows specifying custom PgBouncer configuration
+	// parameters as a YAML document of flat key/value pairs, e.g.:
+	//
+	//   max_client_conn: "500"
+	//   default_pool_size: 20
+	//   query_wait_timeout: 30
+	//
+	// applied on top of, and overriding, the operator's built-in defaults.
+	// More info: https://www.pgbouncer.org/config.html
+	// +optional
+	Configuration string `json:"configuration,omitempty"`
+}
 
 // PostgresqlParameters defines custom parameters for postgresql components.
 type PostgresqlParameters struct {

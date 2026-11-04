@@ -63,6 +63,12 @@ spec:
           type: object
       type: postgresql
     proxy:
+      parametersSchema:
+        openAPIV3Schema:
+          properties:
+            configuration:
+              type: string
+          type: object
       type: pgbouncer
   defaultVersion: 18.4-1
   monitoring:
@@ -141,6 +147,21 @@ spec:
           label: Database Version
         proxy:
           components:
+            proxyConfiguration:
+              fieldParams:
+                label: Custom proxy configuration
+                maxRows: 8
+                minRows: 3
+                multiline: true
+                placeholder: |
+                  max_client_conn: "500"
+                  default_pool_size: 20
+              path: spec.components.proxy.parameters.configuration
+              uiType: text
+              validation:
+                regex:
+                  message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_client_conn: "500"'
+                  pattern: ^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$
             proxyExposure:
               fieldParams:
                 defaultValue: ClusterIP
@@ -249,6 +270,7 @@ spec:
             - proxyLimits
             - proxyRequests
             - proxyExposure
+            - proxyConfiguration
           description: Configure a single proxy type for the cluster.
           label: Proxy
         resources:

@@ -239,12 +239,28 @@ ui:
                 # https://github.com/openeverest/openeverest/issues/2398
               validation:
                 required: true
+            proxyConfiguration:
+              uiType: text
+              path: spec.components.proxy.parameters.configuration
+              fieldParams:
+                label: Custom proxy configuration
+                placeholder: |
+                  max_client_conn: "500"
+                  default_pool_size: 20
+                multiline: true
+                minRows: 3
+                maxRows: 8
+              validation:
+                regex:
+                  pattern: '^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$'
+                  message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_client_conn: "500"'
           componentsOrder:
             - proxyType
             - proxyNodes
             - proxyLimits
             - proxyRequests
             - proxyExposure
+            - proxyConfiguration
         advanced:
             label: Advanced Configuration
             description: Fine-tune PostgreSQL by overriding its default configuration parameters.
