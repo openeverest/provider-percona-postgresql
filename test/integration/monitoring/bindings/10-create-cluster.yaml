@@ -21,3 +21,6 @@ spec:
           resources:
             limits:
               memory: 400Mi
+      - name: prometheus
+        destinationRef:
+          name: prometheus-it

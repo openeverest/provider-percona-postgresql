@@ -1,4 +1,6 @@
-# With the entry gone, PMM is disabled and the Instance reports no monitoring.
+# With the entry gone, PMM is disabled and the Instance reports no
+# destinations. The runtime keeps publishing the source identity, but no
+# metrics endpoints.
 apiVersion: pgv2.percona.com/v2
 kind: PerconaPGCluster
 metadata:
@@ -13,5 +15,6 @@ metadata:
 spec:
   (monitoring == null): true
 status:
-  (monitoring == null): true
+  (monitoring == null || monitoring.destinations == null): true
+  (monitoring.sources.metrics == null): true
   (length(conditions[?type == 'MonitoringConfigured'])): 0

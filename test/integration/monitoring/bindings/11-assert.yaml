@@ -1,0 +1,31 @@
+# Once a component serves, the provider publishes where its exporter listens;
+# the runtime stamps the identity labels and the kind from the component type.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-bindings
+status:
+  monitoring:
+    sources:
+      identity:
+        labels:
+          openeverest_instance: pg-bindings
+          openeverest_namespace: ($namespace)
+          openeverest_provider: provider-percona-postgresql
+      metrics:
+        - component: engine
+          kind: postgresql
+          podSelector:
+            core.openeverest.io/instance: pg-bindings
+            core.openeverest.io/component: engine
+          port: metrics
+          path: /metrics
+          scheme: http
+        - component: proxy
+          kind: pgbouncer
+          podSelector:
+            core.openeverest.io/instance: pg-bindings
+            core.openeverest.io/component: proxy
+          port: metrics
+          path: /metrics
+          scheme: http

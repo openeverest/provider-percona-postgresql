@@ -14,7 +14,6 @@ import (
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -63,9 +62,9 @@ func applyPMM(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
 	if err != nil {
 		return err
 	}
-	live := &pgv2.PerconaPGCluster{}
-	if err := c.Get(live, c.Name()); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("get PerconaPGCluster %q: %w", c.Name(), err)
+	live, err := getLiveCluster(c)
+	if err != nil {
+		return err
 	}
 
 	pmm := req.Integrations[pmmIntegration]
