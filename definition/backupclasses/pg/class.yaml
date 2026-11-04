@@ -5,6 +5,8 @@
 #   displayName/description: human-readable metadata.
 #   supportedProviders: providers this class can be used with.
 #   executionMode: "ProviderManaged" (operator-native) or "Job".
+#   backupStorageClasses: the BackupStorageClasses this class can write to,
+#     each with the authentication modes it supports. Required.
 #   providerManaged.supportsPITR: advertise PITR capability to Restore validation.
 #   providerManaged.limits: caps the runtime enforces against Instance.spec.backup.
 #     maxStorages, maxPITREnabledStorages, maxSchedulesPerStorage — unset means unlimited.
@@ -19,6 +21,10 @@
 
 parametersSchema:
     openAPIV3Schema: PgBackupConfig
+backupStorageClasses:
+    - name: s3
+      authModes:
+        - AccessKey
 description: |
   BackupClass for PostgreSQL based on Percona Operator for PostgreSQL. Backups are managed
   by pgBackRest via the Percona PG operator; OpenEverest does not run any side-car Job for this class.
