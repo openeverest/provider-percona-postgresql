@@ -63,8 +63,10 @@ spec:
             content: |
               kubectl patch instance/test-pg-tls -n "$NAMESPACE" --type=merge \
                 -p '{"spec":{"parameters":{"tls":{"certificateSecretName":"test-pg-tls-certs-2","replicationCertificateSecretName":"test-pg-tls-repl-2"}}}}'
+              # Rejecting the change does not move status.phase off Ready (see
+              # 20-assert.yaml); the Ready condition is what flips to False.
               kubectl wait instance/test-pg-tls -n "$NAMESPACE" \
-                --for=jsonpath='{.status.phase}'=Failed --timeout=30s
+                --for=condition=Ready=False --timeout=30s
         - assert:
             file: 20-assert.yaml
 
@@ -75,7 +77,7 @@ spec:
               kubectl patch instance/test-pg-tls -n "$NAMESPACE" --type=merge \
                 -p '{"spec":{"parameters":{"tls":{"certificateSecretName":"test-pg-tls-certs","replicationCertificateSecretName":"test-pg-tls-repl"}}}}'
               kubectl wait instance/test-pg-tls -n "$NAMESPACE" \
-                --for=jsonpath='{.status.phase}'=Ready --timeout=30s
+                --for=condition=Ready=True --timeout=30s
         - assert:
             file: 21-assert.yaml
 
@@ -85,8 +87,11 @@ spec:
             file: 30-create-cluster-incomplete-secret.yaml
         - script:
             content: |
+              # A brand-new Instance that fails validation is left Pending,
+              # not Failed (see 30-assert.yaml); wait on the Ready condition,
+              # which carries the actual reason.
               kubectl wait instance/test-pg-tls-badsecret -n "$NAMESPACE" \
-                --for=jsonpath='{.status.phase}'=Failed --timeout=30s
+                --for=condition=Ready=False --timeout=30s
               # Validation must fail before Sync ever creates the operator CR.
               if kubectl get perconapgclusters.pgv2.percona.com/test-pg-tls-badsecret -n "$NAMESPACE" 2>/dev/null; then
                 echo "unexpected: PerconaPGCluster test-pg-tls-badsecret was created despite an incomplete certificate secret" >&2
@@ -105,7 +110,7 @@ spec:
         - script:
             content: |
               kubectl wait instance/test-pg-tls-bothset -n "$NAMESPACE" \
-                --for=jsonpath='{.status.phase}'=Failed --timeout=30s
+                --for=condition=Ready=False --timeout=30s
               if kubectl get perconapgclusters.pgv2.percona.com/test-pg-tls-bothset -n "$NAMESPACE" 2>/dev/null; then
                 echo "unexpected: PerconaPGCluster test-pg-tls-bothset was created despite both certificateSecretName and rootCASecretName being set" >&2
                 exit 1
@@ -134,4 +139,5 @@ spec:
             name: test-pg-tls
             for:
               deletion: {}
+
 

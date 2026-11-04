@@ -3,7 +3,12 @@ kind: Instance
 metadata:
   name: test-pg-tls
 status:
-  phase: Failed
+  # Rejecting a change to an already-Ready Instance does not move its phase
+  # (provider-runtime's block() only sets phase on a brand-new Instance,
+  # i.e. when it is still empty); the Ready condition is what flips.
+  phase: Ready
+  (conditions[?type == 'Ready'] | [0].status): "False"
+  (conditions[?type == 'Ready'] | [0].reason): ValidationFailed
 ---
 # The operator CR must keep the original certificate secrets: the provider
 # must not apply the rejected change.

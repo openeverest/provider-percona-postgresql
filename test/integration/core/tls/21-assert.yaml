@@ -9,4 +9,5 @@ spec:
       replicationCertificateSecretName: test-pg-tls-repl
 status:
   phase: Ready
+  (conditions[?type == 'Ready'] | [0].status): "True"
 
