@@ -1,0 +1,30 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-admission
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  components:
+    engine:
+      type: postgresql
+      replicas: 3
+      resources:
+        limits:
+          cpu: "1"
+          memory: 4G
+        requests:
+          cpu: 600m
+          memory: 2G
+      storage:
+        size: 25Gi
+    proxy:
+      type: pgbouncer
+      replicas: 1
+  backup:
+    enabled: true
+    classRef:
+      name: test-admission-other-provider
+    storages:
+      - storageRef:
+          name: test-admission-s3
