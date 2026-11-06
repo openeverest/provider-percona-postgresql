@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -88,7 +89,7 @@ func TestTLSParameters_Defaults(t *testing.T) {
 	t.Parallel()
 
 	c := newTLSTestContext(t, nil)
-	tls, err := tlsParameters(c)
+	tls, err := tlsParameters(c.Instance())
 	require.NoError(t, err)
 	assert.Equal(t, definition.TLSModePrefer, tls.Mode)
 }
@@ -100,7 +101,7 @@ func TestTLSParameters_Decode(t *testing.T) {
 		Mode:                  definition.TLSModeRequire,
 		CertificateSecretName: "my-tls",
 	})
-	tls, err := tlsParameters(c)
+	tls, err := tlsParameters(c.Instance())
 	require.NoError(t, err)
 	assert.Equal(t, definition.TLSModeRequire, tls.Mode)
 	assert.Equal(t, "my-tls", tls.CertificateSecretName)
@@ -166,59 +167,75 @@ func TestConfigureTLS(t *testing.T) {
 	})
 }
 
-func TestValidateTLS_InvalidMode(t *testing.T) {
+func TestValidateTLSParameters_InvalidMode(t *testing.T) {
 	t.Parallel()
 
-	c := newTLSTestContext(t, &definition.TLSParameters{Mode: "bogus"})
-	err := validateTLS(c)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mode must be one of")
+	errs := validateTLSParameters(definition.TLSParameters{Mode: "bogus"}, field.NewPath("spec", "parameters", "tls"))
+	require.Len(t, errs, 1)
+	assert.Equal(t, "spec.parameters.tls.mode", errs[0].Field)
+	assert.Contains(t, errs[0].Error(), "must be one of")
 }
 
-func TestValidateTLS_CertificateAndRootCAMutuallyExclusive(t *testing.T) {
+func TestValidateTLSParameters_CertificateAndRootCAMutuallyExclusive(t *testing.T) {
 	t.Parallel()
 
-	c := newTLSTestContext(t, &definition.TLSParameters{
+	errs := validateTLSParameters(definition.TLSParameters{
+		Mode:                             definition.TLSModePrefer,
 		CertificateSecretName:            "my-tls",
 		ReplicationCertificateSecretName: "my-tls-repl",
 		RootCASecretName:                 "my-ca",
-	})
-	err := validateTLS(c)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not both")
+	}, field.NewPath("spec", "parameters", "tls"))
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Error(), "not both")
 }
 
-func TestValidateTLS_ReplicationSecretRequiresCertificateSecret(t *testing.T) {
+func TestValidateTLSParameters_ReplicationSecretRequiresCertificateSecret(t *testing.T) {
 	t.Parallel()
 
-	c := newTLSTestContext(t, &definition.TLSParameters{ReplicationCertificateSecretName: "my-tls-repl"})
-	err := validateTLS(c)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires certificateSecretName")
+	errs := validateTLSParameters(definition.TLSParameters{
+		Mode:                             definition.TLSModePrefer,
+		ReplicationCertificateSecretName: "my-tls-repl",
+	}, field.NewPath("spec", "parameters", "tls"))
+	require.Len(t, errs, 1)
+	assert.Equal(t, "spec.parameters.tls.certificateSecretName", errs[0].Field)
 }
 
-func TestValidateTLS_CertificateSecretRequiresReplicationSecret(t *testing.T) {
+func TestValidateTLSParameters_CertificateSecretRequiresReplicationSecret(t *testing.T) {
 	t.Parallel()
 
-	c := newTLSTestContext(t, &definition.TLSParameters{CertificateSecretName: "my-tls"})
-	err := validateTLS(c)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires replicationCertificateSecretName")
+	errs := validateTLSParameters(definition.TLSParameters{
+		Mode:                  definition.TLSModePrefer,
+		CertificateSecretName: "my-tls",
+	}, field.NewPath("spec", "parameters", "tls"))
+	require.Len(t, errs, 1)
+	assert.Equal(t, "spec.parameters.tls.replicationCertificateSecretName", errs[0].Field)
 }
 
-func TestValidateTLS_MissingCertificateSecret(t *testing.T) {
+func TestValidateTLSParameters_Valid(t *testing.T) {
+	t.Parallel()
+
+	assert.Empty(t, validateTLSParameters(definition.TLSParameters{
+		Mode:                             definition.TLSModePrefer,
+		CertificateSecretName:            "my-tls",
+		ReplicationCertificateSecretName: "my-tls-repl",
+	}, field.NewPath("spec", "parameters", "tls")))
+}
+
+func TestValidateReferences_MissingCertificateSecret(t *testing.T) {
 	t.Parallel()
 
 	c := newTLSTestContext(t, &definition.TLSParameters{
 		CertificateSecretName:            "my-tls",
 		ReplicationCertificateSecretName: "my-tls-repl",
 	})
-	err := validateTLS(c)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "get certificate secret")
+	errs, err := New().ValidateReferences(c)
+	require.NoError(t, err)
+	require.Len(t, errs, 2)
+	assert.Equal(t, "spec.parameters.tls.certificateSecretName", errs[0].Field)
+	assert.Equal(t, "spec.parameters.tls.replicationCertificateSecretName", errs[1].Field)
 }
 
-func TestValidateTLS_CAMismatch(t *testing.T) {
+func TestValidateReferences_CAMismatch(t *testing.T) {
 	t.Parallel()
 
 	c := newTLSTestContext(t, &definition.TLSParameters{
@@ -228,12 +245,13 @@ func TestValidateTLS_CAMismatch(t *testing.T) {
 		certSecret("my-tls", "everest", []byte("ca-a")),
 		certSecret("my-tls-repl", "everest", []byte("ca-b")),
 	)
-	err := validateTLS(c)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must share the same ca.crt")
+	errs, err := New().ValidateReferences(c)
+	require.NoError(t, err)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Error(), "must share the same ca.crt")
 }
 
-func TestValidateTLS_ValidCertificates(t *testing.T) {
+func TestValidateReferences_ValidCertificates(t *testing.T) {
 	t.Parallel()
 
 	c := newTLSTestContext(t, &definition.TLSParameters{
@@ -243,33 +261,40 @@ func TestValidateTLS_ValidCertificates(t *testing.T) {
 		certSecret("my-tls", "everest", []byte("ca-shared")),
 		certSecret("my-tls-repl", "everest", []byte("ca-shared")),
 	)
-	assert.NoError(t, validateTLS(c))
+	errs, err := New().ValidateReferences(c)
+	require.NoError(t, err)
+	assert.Empty(t, errs)
 }
 
-func TestValidateTLS_MissingRootCASecret(t *testing.T) {
+func TestValidateReferences_MissingRootCASecret(t *testing.T) {
 	t.Parallel()
 
 	c := newTLSTestContext(t, &definition.TLSParameters{RootCASecretName: "my-ca"})
-	err := validateTLS(c)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "get root CA secret")
+	errs, err := New().ValidateReferences(c)
+	require.NoError(t, err)
+	require.Len(t, errs, 1)
+	assert.Equal(t, "spec.parameters.tls.rootCASecretName", errs[0].Field)
 }
 
-func TestValidateTLS_ValidRootCA(t *testing.T) {
+func TestValidateReferences_ValidRootCA(t *testing.T) {
 	t.Parallel()
 
 	c := newTLSTestContext(t, &definition.TLSParameters{RootCASecretName: "my-ca"}, rootCASecret("my-ca", "everest"))
-	assert.NoError(t, validateTLS(c))
+	errs, err := New().ValidateReferences(c)
+	require.NoError(t, err)
+	assert.Empty(t, errs)
 }
 
-func TestValidateTLS_NoChangeOnNewInstance(t *testing.T) {
+func TestValidateReferences_NoChangeOnNewInstance(t *testing.T) {
 	t.Parallel()
 
 	c := newTLSTestContext(t, &definition.TLSParameters{Mode: definition.TLSModeRequire})
-	assert.NoError(t, validateTLS(c))
+	errs, err := New().ValidateReferences(c)
+	require.NoError(t, err)
+	assert.Empty(t, errs)
 }
 
-func TestValidateTLS_RejectsCertificateChangeOnExistingInstance(t *testing.T) {
+func TestValidateReferences_RejectsCertificateChangeOnExistingInstance(t *testing.T) {
 	t.Parallel()
 
 	existing := &pgv2.PerconaPGCluster{
@@ -286,12 +311,13 @@ func TestValidateTLS_RejectsCertificateChangeOnExistingInstance(t *testing.T) {
 		certSecret("new-tls", "everest", []byte("ca")),
 		certSecret("new-tls-repl", "everest", []byte("ca")),
 	)
-	err := validateTLS(c)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "can't change on an existing instance")
+	errs, err := New().ValidateReferences(c)
+	require.NoError(t, err)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Error(), "can't change on an existing instance")
 }
 
-func TestValidateTLS_AllowsSameCertificateOnExistingInstance(t *testing.T) {
+func TestValidateReferences_AllowsSameCertificateOnExistingInstance(t *testing.T) {
 	t.Parallel()
 
 	existing := &pgv2.PerconaPGCluster{
@@ -308,7 +334,9 @@ func TestValidateTLS_AllowsSameCertificateOnExistingInstance(t *testing.T) {
 		certSecret("my-tls", "everest", []byte("ca")),
 		certSecret("my-tls-repl", "everest", []byte("ca")),
 	)
-	assert.NoError(t, validateTLS(c))
+	errs, err := New().ValidateReferences(c)
+	require.NoError(t, err)
+	assert.Empty(t, errs)
 }
 
 func TestTLSConnection(t *testing.T) {

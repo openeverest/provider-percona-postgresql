@@ -208,7 +208,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 	labelPods(c, cluster)
 	applyServiceExpose(cluster, engine, proxy)
 
-	tls, err := tlsParameters(c)
+	tls, err := tlsParameters(c.Instance())
 	if err != nil {
 		return err
 	}

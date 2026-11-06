@@ -16,17 +16,21 @@ package provider
 
 import (
 	"bytes"
-	"errors"
+	"encoding/json"
 	"fmt"
 
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-percona-postgresql/definition"
 )
+
+var _ controller.ReferenceValidator = (*Provider)(nil)
 
 const (
 	// caKey is the key holding the CA certificate, in the certificate
@@ -48,10 +52,10 @@ var certificateSecretKeys = []string{"tls.crt", "tls.key", caKey}
 var rootCASecretKeys = []string{"root.crt", "root.key"}
 
 // tlsParameters returns the instance's TLS parameters with defaults applied.
-func tlsParameters(c *controller.Context) (definition.TLSParameters, error) {
+func tlsParameters(instance *corev1alpha1.Instance) (definition.TLSParameters, error) {
 	params := definition.Parameters{}
-	if raw := c.Instance().Spec.Parameters; raw != nil && len(raw.Raw) > 0 {
-		if err := c.DecodeParameters(&params); err != nil {
+	if raw := instance.Spec.Parameters; raw != nil && len(raw.Raw) > 0 {
+		if err := json.Unmarshal(raw.Raw, &params); err != nil {
 			return definition.TLSParameters{}, fmt.Errorf("decode parameters: %w", err)
 		}
 	}
@@ -107,93 +111,126 @@ func configureTLS(cluster *pgv2.PerconaPGCluster, tls definition.TLSParameters) 
 	}
 }
 
-// validateTLS validates the TLS parameters, and that they keep what can't
-// change on a running instance.
-func validateTLS(c *controller.Context) error {
-	tls, err := tlsParameters(c)
-	if err != nil {
-		return err
-	}
+func validateTLSParameters(tls definition.TLSParameters, path *field.Path) field.ErrorList {
+	var errs field.ErrorList
 
 	switch tls.Mode {
 	case definition.TLSModePrefer, definition.TLSModeRequire:
 	default:
-		return fmt.Errorf("mode must be one of %s or %s, got %q",
-			definition.TLSModePrefer, definition.TLSModeRequire, tls.Mode)
+		errs = append(errs, field.Invalid(path.Child("mode"), tls.Mode,
+			fmt.Sprintf("must be one of %s or %s", definition.TLSModePrefer, definition.TLSModeRequire)))
 	}
 
 	switch {
 	case tls.CertificateSecretName != "" && tls.RootCASecretName != "":
-		return errors.New("use either certificate secrets or a root CA secret, not both")
+		errs = append(errs, field.Invalid(path.Child("rootCASecretName"), tls.RootCASecretName,
+			"use either certificate secrets or a root CA secret, not both"))
 	case tls.CertificateSecretName == "" && tls.ReplicationCertificateSecretName != "":
-		return errors.New("replicationCertificateSecretName requires certificateSecretName")
+		errs = append(errs, field.Required(path.Child("certificateSecretName"),
+			"required when replicationCertificateSecretName is set"))
 	case tls.CertificateSecretName != "" && tls.ReplicationCertificateSecretName == "":
-		return errors.New("certificateSecretName requires replicationCertificateSecretName")
+		errs = append(errs, field.Required(path.Child("replicationCertificateSecretName"),
+			"required when certificateSecretName is set"))
 	}
 
+	return errs
+}
+
+func (p *Provider) ValidateReferences(c *controller.Context) (field.ErrorList, error) {
+	tls, err := tlsParameters(c.Instance())
+	if err != nil {
+		return nil, err
+	}
+	path := field.NewPath("spec", "parameters", "tls")
+
+	var errs field.ErrorList
+
 	if tls.CertificateSecretName != "" {
-		ca, err := validateCertificateSecret(c, tls.CertificateSecretName)
+		certPath := path.Child("certificateSecretName")
+		ca, certErrs, err := validateCertificateSecret(c, certPath, tls.CertificateSecretName)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		replicationCA, err := validateCertificateSecret(c, tls.ReplicationCertificateSecretName)
+		errs = append(errs, certErrs...)
+
+		replPath := path.Child("replicationCertificateSecretName")
+		replicationCA, replErrs, err := validateCertificateSecret(c, replPath, tls.ReplicationCertificateSecretName)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if !bytes.Equal(ca, replicationCA) {
-			return errors.New("certificateSecretName and replicationCertificateSecretName must share the same ca.crt")
+		errs = append(errs, replErrs...)
+
+		if len(certErrs) == 0 && len(replErrs) == 0 && !bytes.Equal(ca, replicationCA) {
+			errs = append(errs, field.Invalid(replPath, tls.ReplicationCertificateSecretName,
+				"must share the same ca.crt as certificateSecretName"))
 		}
 	}
 
 	if tls.RootCASecretName != "" {
-		if err := validateRootCASecret(c, tls.RootCASecretName); err != nil {
-			return err
+		rootErrs, err := validateRootCASecret(c, path.Child("rootCASecretName"), tls.RootCASecretName)
+		if err != nil {
+			return nil, err
 		}
+		errs = append(errs, rootErrs...)
 	}
 
-	return validateTLSChange(c, tls)
+	changeErrs, err := validateTLSChange(c, tls, path)
+	if err != nil {
+		return nil, err
+	}
+	errs = append(errs, changeErrs...)
+
+	return errs, nil
 }
 
 // validateCertificateSecret checks that a certificate secret has the keys a
 // server or replication certificate needs, and returns its CA certificate.
-func validateCertificateSecret(c *controller.Context, name string) ([]byte, error) {
+func validateCertificateSecret(c *controller.Context, path *field.Path, name string) ([]byte, field.ErrorList, error) {
 	secret := &corev1.Secret{}
 	if err := c.Get(secret, name); err != nil {
-		return nil, fmt.Errorf("get certificate secret %q: %w", name, err)
+		if apierrors.IsNotFound(err) {
+			return nil, field.ErrorList{field.NotFound(path, name)}, nil
+		}
+		return nil, nil, fmt.Errorf("get certificate secret %q: %w", name, err)
 	}
+	var errs field.ErrorList
 	for _, key := range certificateSecretKeys {
 		if len(secret.Data[key]) == 0 {
-			return nil, fmt.Errorf("certificate secret %q is missing %q", name, key)
+			errs = append(errs, field.Invalid(path, name, fmt.Sprintf("secret is missing %q", key)))
 		}
 	}
-	return secret.Data[caKey], nil
+	return secret.Data[caKey], errs, nil
 }
 
 // validateRootCASecret checks that a root CA secret has the keys the
 // operator needs to sign generated certificates with it.
-func validateRootCASecret(c *controller.Context, name string) error {
+func validateRootCASecret(c *controller.Context, path *field.Path, name string) (field.ErrorList, error) {
 	secret := &corev1.Secret{}
 	if err := c.Get(secret, name); err != nil {
-		return fmt.Errorf("get root CA secret %q: %w", name, err)
+		if apierrors.IsNotFound(err) {
+			return field.ErrorList{field.NotFound(path, name)}, nil
+		}
+		return nil, fmt.Errorf("get root CA secret %q: %w", name, err)
 	}
+	var errs field.ErrorList
 	for _, key := range rootCASecretKeys {
 		if len(secret.Data[key]) == 0 {
-			return fmt.Errorf("root CA secret %q is missing %q", name, key)
+			errs = append(errs, field.Invalid(path, name, fmt.Sprintf("secret is missing %q", key)))
 		}
 	}
-	return nil
+	return errs, nil
 }
 
 // validateTLSChange rejects a change of certificate source on a running
 // instance: a new CA would stop existing clients and members from trusting
 // the instance.
-func validateTLSChange(c *controller.Context, tls definition.TLSParameters) error {
+func validateTLSChange(c *controller.Context, tls definition.TLSParameters, path *field.Path) (field.ErrorList, error) {
 	current := &pgv2.PerconaPGCluster{}
 	if err := c.Get(current, c.Name()); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil
+			return nil, nil
 		}
-		return fmt.Errorf("fetching current PerconaPGCluster: %w", err)
+		return nil, fmt.Errorf("fetching current PerconaPGCluster: %w", err)
 	}
 
 	currentSecret := ""
@@ -206,10 +243,10 @@ func validateTLSChange(c *controller.Context, tls definition.TLSParameters) erro
 	}
 
 	if currentSecret != tls.CertificateSecretName || currentRootCA != tls.RootCASecretName {
-		return errors.New("certificates and root CA secret can't change on an existing instance")
+		return field.ErrorList{field.Forbidden(path, "certificates and root CA secret can't change on an existing instance")}, nil
 	}
 
-	return nil
+	return nil, nil
 }
 
 // tlsConnection returns the CA clients verify the instance with, and the
@@ -217,7 +254,7 @@ func validateTLSChange(c *controller.Context, tls definition.TLSParameters) erro
 // TLS or, regardless of mode, clients connect through pgBouncer (which
 // always requires TLS from clients); "prefer" otherwise.
 func tlsConnection(c *controller.Context, cluster *pgv2.PerconaPGCluster) (ca []byte, sslMode string, err error) {
-	tls, err := tlsParameters(c)
+	tls, err := tlsParameters(c.Instance())
 	if err != nil {
 		return nil, "", err
 	}
