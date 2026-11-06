@@ -105,21 +105,18 @@ spec:
 
     - name: certificate-secret-and-root-ca-together-is-rejected
       try:
-        - apply:
-            file: 31-create-cluster-secret-and-rootca.yaml
+        # Setting certificateSecretName and rootCASecretName together is a
+        # purely structural error the webhook can catch without looking at
+        # any Secret, so the admission webhook denies the Create request
+        # outright and the Instance is never persisted (unlike the
+        # incomplete-secret case above, which requires a Secret lookup and
+        # is therefore only caught later, inside Sync).
         - script:
-            content: |
-              kubectl wait instance/test-pg-tls-bothset -n "$NAMESPACE" \
-                --for=condition=Ready=False --timeout=30s
-              if kubectl get perconapgclusters.pgv2.percona.com/test-pg-tls-bothset -n "$NAMESPACE" 2>/dev/null; then
-                echo "unexpected: PerconaPGCluster test-pg-tls-bothset was created despite both certificateSecretName and rootCASecretName being set" >&2
-                exit 1
-              fi
-        - assert:
-            file: 31-assert.yaml
-        - script:
-            content: |
-              kubectl -n "$NAMESPACE" delete instance/test-pg-tls-bothset --ignore-not-found --wait=true
+            content: kubectl apply -n $NAMESPACE -f 31-create-cluster-secret-and-rootca.yaml
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.parameters.tls.rootCASecretName')): true
+              (contains($stderr, 'use either certificate secrets or a root CA secret, not both')): true
 
     - name: delete-cluster
       try:
