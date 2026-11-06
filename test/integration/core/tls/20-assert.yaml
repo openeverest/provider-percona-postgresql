@@ -8,7 +8,7 @@ status:
   # i.e. when it is still empty); the Ready condition is what flips.
   phase: Ready
   (conditions[?type == 'Ready'] | [0].status): "False"
-  (conditions[?type == 'Ready'] | [0].reason): ValidationFailed
+  (conditions[?type == 'Ready'] | [0].reason): InvalidReference
 ---
 # The operator CR must keep the original certificate secrets: the provider
 # must not apply the rejected change.
