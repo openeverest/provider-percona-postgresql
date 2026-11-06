@@ -57,16 +57,37 @@ spec:
     engine:
       parametersSchema:
         openAPIV3Schema:
+          description: PostgresqlParameters defines custom parameters for postgresql components.
           properties:
             configuration:
+              description: |-
+                Configuration allows specifying custom PostgreSQL configuration
+                parameters as a YAML document of flat key/value pairs, e.g.:
+
+                  max_connections: "500"
+                  shared_buffers: 1GB
+                  wal_level: replica
+
+                applied on top of, and overrides, the operator's built-in defaults.
               type: string
           type: object
       type: postgresql
     proxy:
       parametersSchema:
         openAPIV3Schema:
+          description: PgbouncerParameters defines custom parameters for pgbouncer components.
           properties:
             configuration:
+              description: |-
+                Configuration allows specifying custom PgBouncer configuration
+                parameters as a YAML document of flat key/value pairs, e.g.:
+
+                  max_client_conn: "500"
+                  default_pool_size: 20
+                  query_wait_timeout: 30
+
+                applied on top of, and overriding, the operator's built-in defaults.
+                More info: https://www.pgbouncer.org/config.html
               type: string
           type: object
       type: pgbouncer
@@ -101,6 +122,21 @@ spec:
         proxy: {}
       parametersSchema:
         openAPIV3Schema:
+          description: |-
+            ClusterTopologyParameters defines parameters for the cluster topology.
+            Add fields here when the cluster topology needs custom parameters
+            beyond what the base Instance spec provides.
+
+            Example:
+
+            	type ClusterTopologyParameters struct {
+            	    NumShards int32 `json:"numShards,omitempty"`
+            	}
+
+            Then reference it in topology.yaml:
+
+            	config:
+            	  parametersSchema: ClusterTopologyParameters
           type: object
   uiSchema:
     cluster:
