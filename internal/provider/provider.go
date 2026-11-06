@@ -208,6 +208,12 @@ func (p *Provider) Sync(c *controller.Context) error {
 	labelPods(c, cluster)
 	applyServiceExpose(cluster, engine, proxy)
 
+	tls, err := tlsParameters(c.Instance())
+	if err != nil {
+		return err
+	}
+	configureTLS(cluster, tls)
+
 	if err := applyEngineConfiguration(c, cluster); err != nil {
 		return err
 	}
@@ -375,6 +381,10 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 	// The PGBouncer keys are present even when PGBouncer has no replicas, so
 	// they are only used when PGBouncer is enabled.
 	pgBouncerOn := pgBouncerEnabled(cluster)
+	ca, sslMode, err := tlsConnection(c, cluster)
+	if err != nil {
+		return controller.Status{}, err
+	}
 	var username, password, uri string
 	userSecret := &corev1.Secret{}
 	secretName := c.Name() + "-pguser-" + defaultUsername
@@ -392,10 +402,10 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		} else if v := userSecret.Data["uri"]; len(v) > 0 {
 			uri = string(v)
 		}
-		// Ensure the URI includes sslmode=require so that clients connect
-		// over TLS. PGBouncer is configured with SSL by the Percona PG
-		// operator and rejects plain-text connections.
-		uri = ensureSSLMode(uri)
+		// Ensure the URI's sslmode matches the instance's TLS mode and how
+		// clients reach it. PGBouncer always requires TLS from clients
+		// regardless of mode, and rejects plain-text connections.
+		uri = ensureSSLMode(uri, sslMode)
 	}
 
 	// Use the pgbouncer-host from the secret when PGBouncer is running (it
@@ -420,7 +430,7 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		uri = replaceURIHost(uri, host)
 	}
 
-	return controller.ReadyWithConnectionDetails(controller.ConnectionDetails{
+	details := controller.ConnectionDetails{
 		Type:     "postgresql",
 		Provider: common.ProviderName,
 		Host:     host,
@@ -428,7 +438,14 @@ func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
 		Username: username,
 		Password: password,
 		URI:      uri,
-	}), nil
+	}
+	if len(ca) > 0 {
+		// Clients verify the instance's certificate against this CA
+		// (sslrootcert); the operator's own CA is not publicly trusted.
+		details.AdditionalProperties = map[string]string{caKey: string(ca)}
+	}
+
+	return controller.ReadyWithConnectionDetails(details), nil
 }
 
 func isRestoreRunning(c *controller.Context) (bool, error) {
@@ -548,11 +565,11 @@ func replaceURIHost(rawURI, host string) string {
 	return parsed.String()
 }
 
-// ensureSSLMode appends sslmode=require to the URI query parameters if no
-// sslmode is already specified. PGBouncer deployed by the Percona PG operator
-// mandates TLS; without this parameter clients attempt a plain-text connection
-// first and get rejected with "no such user" / "SSL required".
-func ensureSSLMode(rawURI string) string {
+// ensureSSLMode sets sslmode in the URI query parameters to mode, unless
+// already set explicitly. PGBouncer deployed by the Percona PG operator
+// always requires TLS; without this parameter clients attempt a plain-text
+// connection first and get rejected with "no such user" / "SSL required".
+func ensureSSLMode(rawURI, mode string) string {
 	if rawURI == "" {
 		return rawURI
 	}
@@ -564,7 +581,7 @@ func ensureSSLMode(rawURI string) string {
 	if q.Get("sslmode") != "" {
 		return rawURI
 	}
-	q.Set("sslmode", "require")
+	q.Set("sslmode", mode)
 	parsed.RawQuery = q.Encode()
 	return parsed.String()
 }

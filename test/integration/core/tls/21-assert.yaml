@@ -1,0 +1,13 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-tls
+spec:
+  parameters:
+    tls:
+      certificateSecretName: test-pg-tls-certs
+      replicationCertificateSecretName: test-pg-tls-repl
+status:
+  phase: Ready
+  (conditions[?type == 'Ready'] | [0].status): "True"
+

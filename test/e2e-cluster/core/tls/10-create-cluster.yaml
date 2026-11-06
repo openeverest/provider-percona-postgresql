@@ -1,0 +1,39 @@
+# The smallest cluster the operator will actually start (see
+# test/e2e-cluster/datasource/backup/30-create-source.yaml): one engine
+# replica fronted by one pgBouncer replica, since clients reach the instance
+# through pgBouncer.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-tls
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  components:
+    engine:
+      type: postgresql
+      replicas: 1
+      storage:
+        size: 1Gi
+      resources:
+        limits:
+          cpu: 600m
+          memory: 512Mi
+        requests:
+          cpu: 300m
+          memory: 256Mi
+    proxy:
+      type: pgbouncer
+      replicas: 1
+      resources:
+        limits:
+          cpu: 200m
+          memory: 128Mi
+  parameters:
+    tls:
+      mode: requireTLS
+      # The secrets are created by the generate-certificate-and-secrets step,
+      # before this file is applied.
+      certificateSecretName: pg-tls-certs
+      replicationCertificateSecretName: pg-tls-repl
+

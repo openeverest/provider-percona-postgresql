@@ -1,0 +1,26 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-tls
+status:
+  phase: Ready
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: test-pg-tls
+status:
+  postgres:
+    size: 3
+    ready: 3
+---
+# The connection secret must carry the CA from the certificate secret
+# (tlsConnection in internal/provider/tls.go, used by provider.go's Status),
+# so TLS clients can verify the instance's certificate.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-pg-tls-conn
+data:
+  ca.crt: ZmFrZS1jYS1jcnQ=
+

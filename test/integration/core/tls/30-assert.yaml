@@ -1,0 +1,12 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-tls-badsecret
+status:
+  # A brand-new Instance that fails validation is left Pending
+  # (provider-runtime's block() only sets a phase when it is still empty);
+  # the Ready condition carries the actual reason.
+  phase: Pending
+  (conditions[?type == 'Ready'] | [0].status): "False"
+  (conditions[?type == 'Ready'] | [0].reason): InvalidReference
+

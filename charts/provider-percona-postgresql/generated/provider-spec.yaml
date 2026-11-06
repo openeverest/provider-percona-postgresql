@@ -98,6 +98,44 @@ spec:
         agentVersions: '>=3.0.0 <4.0.0'
         authModes:
           - ServiceAccountToken
+  parametersSchema:
+    openAPIV3Schema:
+      description: |-
+        Parameters defines instance-wide structured parameters that apply to the
+        entire cluster (Instance.spec.parameters).
+      properties:
+        tls:
+          description: |-
+            TLS configures encryption in transit, between clients and the instance
+            and between its members.
+          properties:
+            certificateSecretName:
+              description: |-
+                CertificateSecretName names a Secret in the instance namespace with
+                the certificate clients connect to: tls.crt, tls.key and ca.crt. Its
+                subject alternative names must cover the instance's service names.
+                Requires ReplicationCertificateSecretName.
+              type: string
+            mode:
+              default: preferTLS
+              description: Mode controls whether non-TLS connections are rejected.
+              type: string
+            replicationCertificateSecretName:
+              description: |-
+                ReplicationCertificateSecretName names a Secret in the instance
+                namespace with the client certificate members use to authenticate
+                replication connections, in the same format and sharing the same CA
+                as the certificate secret.
+              type: string
+            rootCASecretName:
+              description: |-
+                RootCASecretName names a Secret in the instance namespace with the CA
+                certificate and key (root.crt, root.key) the operator signs the
+                certificates it generates with, instead of creating its own CA for
+                the instance. Can't be combined with CertificateSecretName.
+              type: string
+          type: object
+      type: object
   release:
     version: 0.6.0
   topologies:
@@ -394,10 +432,81 @@ spec:
             - resourcesRequests
           description: Configure the resources your database will have access to.
           label: Resources
+        tls:
+          components:
+            certificates:
+              components:
+                certificateSecretName:
+                  fieldParams:
+                    helperText: Secret with tls.crt, tls.key and ca.crt that clients connect to
+                    label: Certificate secret
+                    modes:
+                      edit:
+                        disabled: true
+                  path: spec.parameters.tls.certificateSecretName
+                  uiType: text
+                  validation:
+                    celExpressions:
+                      - celExpr: '!has(spec.parameters.tls.certificateSecretName) || spec.parameters.tls.certificateSecretName == '''' || !has(spec.parameters.tls.rootCASecretName) || spec.parameters.tls.rootCASecretName == '''''
+                        message: Use either certificate secrets or a root CA secret, not both
+                replicationCertificateSecretName:
+                  fieldParams:
+                    helperText: For connections between members; must share the same ca.crt as the certificate secret
+                    label: Replication certificate secret
+                    modes:
+                      edit:
+                        disabled: true
+                  path: spec.parameters.tls.replicationCertificateSecretName
+                  uiType: text
+                  validation:
+                    celExpressions:
+                      - celExpr: '!has(spec.parameters.tls.replicationCertificateSecretName) || spec.parameters.tls.replicationCertificateSecretName == '''' || (has(spec.parameters.tls.certificateSecretName) && spec.parameters.tls.certificateSecretName != '''')'
+                        message: Set the certificate secret as well
+                rootCASecretName:
+                  fieldParams:
+                    helperText: Secret with root.crt and root.key the operator signs generated certificates with
+                    label: Root CA secret
+                    modes:
+                      edit:
+                        disabled: true
+                  path: spec.parameters.tls.rootCASecretName
+                  uiType: text
+                  validation:
+                    celExpressions:
+                      - celExpr: '!has(spec.parameters.tls.rootCASecretName) || spec.parameters.tls.rootCASecretName == '''' || !has(spec.parameters.tls.certificateSecretName) || spec.parameters.tls.certificateSecretName == '''''
+                        message: Use either a root CA secret or certificate secrets, not both
+              componentsOrder:
+                - certificateSecretName
+                - replicationCertificateSecretName
+                - rootCASecretName
+              description: 'Leave empty to have certificates issued for the instance: by cert-manager when it is installed, otherwise by a CA created for the instance. Can''t be changed after the instance is created.'
+              groupType: bordered
+              label: Certificates
+              uiType: group
+            mode:
+              fieldParams:
+                defaultValue: preferTLS
+                helperText: pgBouncer always requires TLS from clients; this controls direct connections to PostgreSQL.
+                label: TLS mode
+                options:
+                  - label: 'Preferred: direct clients choose whether to use TLS'
+                    value: preferTLS
+                  - label: 'Required: all connections must use TLS'
+                    value: requireTLS
+              path: spec.parameters.tls.mode
+              uiType: select
+              validation:
+                required: true
+          componentsOrder:
+            - mode
+            - certificates
+          description: Encrypt connections to your database and between its members.
+          label: TLS
       sectionsOrder:
         - databaseVersion
         - resources
         - proxy
+        - tls
         - advanced
   versions:
     - components:

@@ -1,0 +1,175 @@
+---
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: core-tls
+spec:
+  description: |
+    TLS against a real PG operator: generate a self-signed CA and a server
+    and replication certificate, create an Instance with
+    spec.parameters.tls.certificateSecretName / .replicationCertificateSecretName
+    pointing at them, and verify end to end that the operator leaves the
+    secrets alone, the connection secret carries the CA, the client
+    connection actually negotiates TLS, and pgBouncer presents the
+    certificate we supplied (not an operator-generated one).
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-percona-postgresql
+        tail: 100
+  steps:
+    - name: provider-operator-installed
+      try:
+        - assert:
+            file: 00-assert.yaml
+
+    - name: generate-certificate-and-secrets
+      try:
+        - script:
+            content: |
+              set -e
+              WORKDIR="/tmp/pg-tls-e2e-${NAMESPACE}"
+              rm -rf "${WORKDIR}" && mkdir -p "${WORKDIR}"
+              cd "${WORKDIR}"
+
+              openssl genrsa -out ca.key 2048 2>/dev/null
+              openssl req -x509 -new -nodes -key ca.key -sha256 -days 1 \
+                -subj "/CN=pg-tls-ca" -out ca.crt
+
+              cat > san.cnf <<SANEOF
+              subjectAltName = @alt_names
+              [alt_names]
+              DNS.1 = *.pg-tls-primary
+              DNS.2 = *.pg-tls-primary.${NAMESPACE}
+              DNS.3 = *.pg-tls-primary.${NAMESPACE}.svc
+              DNS.4 = pg-tls-primary
+              DNS.5 = pg-tls-primary.${NAMESPACE}
+              DNS.6 = pg-tls-primary.${NAMESPACE}.svc
+              DNS.7 = *.pg-tls-pgbouncer
+              DNS.8 = *.pg-tls-pgbouncer.${NAMESPACE}
+              DNS.9 = *.pg-tls-pgbouncer.${NAMESPACE}.svc
+              DNS.10 = pg-tls-pgbouncer
+              DNS.11 = pg-tls-pgbouncer.${NAMESPACE}
+              DNS.12 = pg-tls-pgbouncer.${NAMESPACE}.svc
+              SANEOF
+
+              # Server certificate: what pgBouncer and PostgreSQL present to clients.
+              openssl genrsa -out tls.key 2048 2>/dev/null
+              openssl req -new -key tls.key -subj "/CN=pg-tls-postgres" -out server.csr
+              openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+                -out tls.crt -days 1 -sha256 -extfile san.cnf
+              kubectl create secret generic pg-tls-certs -n "${NAMESPACE}" \
+                --from-file=tls.crt=tls.crt --from-file=tls.key=tls.key --from-file=ca.crt=ca.crt
+
+              # Replication client certificate: must share the server's CA, but is
+              # otherwise a distinct key pair (see the SecretsSpec doc in the
+              # Percona PostgreSQL Operator's pgv2 API: CustomReplicationClientTLSSecret
+              # and CustomTLSSecret must carry the same ca.crt).
+              openssl genrsa -out repl.key 2048 2>/dev/null
+              openssl req -new -key repl.key -subj "/CN=pg-tls-replication" -out repl.csr
+              openssl x509 -req -in repl.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+                -out repl.crt -days 1 -sha256
+              kubectl create secret generic pg-tls-repl -n "${NAMESPACE}" \
+                --from-file=tls.crt=repl.crt --from-file=tls.key=repl.key --from-file=ca.crt=ca.crt
+
+    - name: create-cluster
+      try:
+        - apply:
+            file: 10-create-cluster.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    - name: cluster-ready
+      try:
+        - assert:
+            timeout: 15m
+            file: 20-assert.yaml
+      catch:
+        - script:
+            content: |
+              kubectl -n "${NAMESPACE}" get pods,pvc,perconapgclusters.pgv2.percona.com,instance -o wide
+              kubectl -n "${NAMESPACE}" describe pod -l postgres-operator.crunchydata.com/cluster=pg-tls || true
+
+    - name: certificate-secrets-are-untouched
+      try:
+        - script:
+            content: |
+              set -e
+              WORKDIR="/tmp/pg-tls-e2e-${NAMESPACE}"
+              for secret in pg-tls-certs pg-tls-repl; do
+                owners="$(kubectl get secret/${secret} -n "${NAMESPACE}" -o jsonpath='{.metadata.ownerReferences}')"
+                if [ -n "$owners" ]; then
+                  echo "unexpected: the operator took ownership of the user-supplied secret ${secret}: $owners" >&2
+                  exit 1
+                fi
+              done
+              kubectl get secret/pg-tls-certs -n "${NAMESPACE}" -o jsonpath='{.data.tls\.crt}' | base64 -d > "${WORKDIR}/tls.crt.actual"
+              diff "${WORKDIR}/tls.crt.actual" "${WORKDIR}/tls.crt"
+              echo "certificate secrets unchanged"
+
+    - name: connection-secret-carries-ca
+      try:
+        - script:
+            content: |
+              set -e
+              WORKDIR="/tmp/pg-tls-e2e-${NAMESPACE}"
+              kubectl get secret/pg-tls-conn -n "${NAMESPACE}" -o jsonpath='{.data.ca\.crt}' | base64 -d > "${WORKDIR}/ca.crt.actual"
+              diff "${WORKDIR}/ca.crt.actual" "${WORKDIR}/ca.crt"
+              echo "connection secret carries our CA"
+
+    - name: create-postgresql-client
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              kubectl run -n "${NAMESPACE}" pg-tls-client --env="NO_COLOR=1" --image=postgres:17 --restart=Never --command -- sleep 600
+              kubectl wait --for=condition=Ready pod/pg-tls-client --timeout=60s -n "${NAMESPACE}"
+      catch:
+        - script:
+            content: kubectl get pod/pg-tls-client -n $NAMESPACE -o yaml
+
+    - name: verify-client-connection-uses-tls
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              set -e
+              CONN_URI="$(kubectl get secret/pg-tls-conn -n ${NAMESPACE} -o jsonpath='{.data.uri}' | base64 -d)"
+              case "$CONN_URI" in
+                *sslmode=require*) ;;
+                *) echo "unexpected: connection URI does not request TLS: $CONN_URI" >&2; exit 1 ;;
+              esac
+              SSL="$(kubectl exec pg-tls-client -n ${NAMESPACE} -- psql "$CONN_URI" -tA \
+                -c "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid();")"
+              echo "ssl=${SSL}"
+              test "${SSL}" = "t"
+
+    - name: verify-server-presents-our-certificate
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              set -e
+              HOST="$(kubectl get secret/pg-tls-conn -n ${NAMESPACE} -o jsonpath='{.data.host}' | base64 -d)"
+              PORT="$(kubectl get secret/pg-tls-conn -n ${NAMESPACE} -o jsonpath='{.data.port}' | base64 -d)"
+              if ! kubectl exec pg-tls-client -n ${NAMESPACE} -- sh -c 'command -v openssl' >/dev/null 2>&1; then
+                echo "openssl not available in the client image; skipping certificate-subject check"
+                exit 0
+              fi
+              SUBJECT="$(kubectl exec pg-tls-client -n ${NAMESPACE} -- sh -c \
+                "echo | openssl s_client -starttls postgres -connect ${HOST}:${PORT} 2>/dev/null | openssl x509 -noout -subject -issuer" || true)"
+              echo "${SUBJECT}"
+              echo "${SUBJECT}" | grep -q "CN *= *pg-tls-postgres"
+              echo "${SUBJECT}" | grep -q "CN *= *pg-tls-ca"
+
+    - name: cleanup
+      try:
+        - script:
+            timeout: 180s
+            content: |
+              kubectl delete pod/pg-tls-client -n $NAMESPACE --ignore-not-found --wait=false || true
+              kubectl delete instance/pg-tls -n $NAMESPACE --ignore-not-found --wait=true --timeout=150s || true
+              rm -rf "/tmp/pg-tls-e2e-${NAMESPACE}" || true
+
