@@ -100,16 +100,39 @@ spec:
           - ServiceAccountToken
   parametersSchema:
     openAPIV3Schema:
+      description: |-
+        Parameters defines instance-wide structured parameters that apply to the
+        entire cluster (Instance.spec.parameters).
       properties:
         tls:
+          description: |-
+            TLS configures encryption in transit, between clients and the instance
+            and between its members.
           properties:
             certificateSecretName:
+              description: |-
+                CertificateSecretName names a Secret in the instance namespace with
+                the certificate clients connect to: tls.crt, tls.key and ca.crt. Its
+                subject alternative names must cover the instance's service names.
+                Requires ReplicationCertificateSecretName.
               type: string
             mode:
+              default: preferTLS
+              description: Mode controls whether non-TLS connections are rejected.
               type: string
             replicationCertificateSecretName:
+              description: |-
+                ReplicationCertificateSecretName names a Secret in the instance
+                namespace with the client certificate members use to authenticate
+                replication connections, in the same format and sharing the same CA
+                as the certificate secret.
               type: string
             rootCASecretName:
+              description: |-
+                RootCASecretName names a Secret in the instance namespace with the CA
+                certificate and key (root.crt, root.key) the operator signs the
+                certificates it generates with, instead of creating its own CA for
+                the instance. Can't be combined with CertificateSecretName.
               type: string
           type: object
       type: object
