@@ -23,9 +23,10 @@ const (
 	instanceNameLabelKey = "instanceName"
 
 	// finalizerDeleteBackupData is the finalizer the Percona PG operator
-	// sets on every PerconaPGBackup. When present during deletion, the
-	// operator purges the backup data from storage. We remove it when the
-	// OpenEverest Backup's DeletionPolicy is Retain so data is preserved.
+	// sets on every PerconaPGBackup. The operator runs and removes it when
+	// the backup completes, and it never purges the backup data, so the
+	// provider purges the data itself (see purgeBackupData). We still remove
+	// it when the DeletionPolicy is Retain, in case it is present.
 	finalizerDeleteBackupData = "internal.percona.com/delete-backup"
 )
 
@@ -577,11 +578,10 @@ func resolvePointInTimeSource(
 }
 
 // CleanupBackup deletes the operator backup resource.
-// When the Backup's DeletionPolicy is Retain, the operator's
-// internal.percona.com/delete-backup finalizer is removed first so the
-// Percona operator skips data purging and leaves the backup data in storage.
-// When the policy is Delete (default), the finalizer is left in place so the
-// operator cleans up the data.
+// When the Backup's DeletionPolicy is Delete (default), it first removes the
+// backup's pgBackRest set from the repo (see purgeBackupData), because the
+// Percona operator does not. When the policy is Retain, the data is kept and
+// the operator's internal.percona.com/delete-backup finalizer is removed.
 // Return true only when fully deleted, false to requeue.
 func (p *Provider) CleanupBackup(c *controller.Context, backup *backupv1alpha1.Backup) (bool, error) {
 	l := log.FromContext(c.Context())
@@ -606,6 +606,8 @@ func (p *Provider) CleanupBackup(c *controller.Context, backup *backupv1alpha1.B
 				return false, fmt.Errorf("remove delete-backup finalizer from PerconaPGBackup %q: %w", name, err)
 			}
 		}
+	} else if err := p.purgeBackupData(c, opBackup); err != nil {
+		return false, fmt.Errorf("purge backup data for PerconaPGBackup %q: %w", name, err)
 	}
 
 	if opBackup.DeletionTimestamp.IsZero() {

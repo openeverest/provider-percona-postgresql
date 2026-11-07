@@ -37,6 +37,9 @@ package provider
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // Allow the runtime to report on the component pods in the Instance status.
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// Allow running pgbackrest in the repo host pod to purge a deleted Backup's data.
+// get is needed for exec over WebSocket (HTTP GET), create for SPDY (POST).
+// +kubebuilder:rbac:groups="",resources=pods/exec,verbs=get;create
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/status,verbs=get
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/finalizers,verbs=update
