@@ -7,7 +7,7 @@ import (
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
-	"github.com/openeverest/openeverest/v2/pkg/backupstorageclasses"
+	"github.com/openeverest/openeverest/v2/backupstorageclasses/s3"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
@@ -1127,11 +1127,11 @@ func s3Storage(name, parameters string, tls *apicommon.TLSConfig) []client.Objec
 		&backupv1alpha1.BackupStorage{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: repoTestNamespace, Generation: 1},
 			Spec: backupv1alpha1.BackupStorageSpec{
-				BackupStorageClassRef: apicommon.ObjectRef{Name: backupstorageclasses.ClassS3},
+				BackupStorageClassRef: apicommon.ObjectRef{Name: s3.ClassName},
 				Location:              backupv1alpha1.BackupStorageLocation{ObjectStore: &backupv1alpha1.ObjectStoreLocation{Bucket: "backups", Prefix: "team-a"}},
 				Parameters:            &runtime.RawExtension{Raw: []byte(parameters)},
 				Authentication: apicommon.Authentication{
-					Mode:                 backupstorageclasses.AuthModeAccessKey,
+					Mode:                 s3.AuthModeAccessKey,
 					CredentialsSecretRef: &apicommon.SecretRef{Name: name + "-creds"},
 				},
 				TLS: tls,
@@ -1144,8 +1144,8 @@ func s3Storage(name, parameters string, tls *apicommon.TLSConfig) []client.Objec
 		&corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: name + "-creds", Namespace: repoTestNamespace},
 			Data: map[string][]byte{
-				backupstorageclasses.KeyAWSAccessKeyID:     []byte("key"),
-				backupstorageclasses.KeyAWSSecretAccessKey: []byte("secret"),
+				s3.KeyAWSAccessKeyID:     []byte("key"),
+				s3.KeyAWSSecretAccessKey: []byte("secret"),
 			},
 		},
 	}
@@ -1181,7 +1181,7 @@ func newRepoTestContext(t *testing.T, in *corev1alpha1.Instance, objs ...client.
 		Spec: backupv1alpha1.BackupClassSpec{
 			ExecutionMode: backupv1alpha1.BackupExecutionModeProviderManaged,
 			BackupStorageClasses: []backupv1alpha1.BackupStorageClassSupport{
-				{Name: backupstorageclasses.ClassS3, AuthModes: []string{backupstorageclasses.AuthModeAccessKey}},
+				{Name: s3.ClassName, AuthModes: []string{s3.AuthModeAccessKey}},
 			},
 		},
 	}

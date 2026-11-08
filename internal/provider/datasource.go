@@ -6,7 +6,6 @@ import (
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
-	"github.com/openeverest/openeverest/v2/pkg/backupstorageclasses"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	upstreamv1beta1 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/upstream.pgv2.percona.com/v1beta1"
@@ -137,7 +136,7 @@ func buildDataSourceBootstrap(c *controller.Context) (*dataSourceBootstrap, *con
 	// The source Instance wrote its backups under its own path; the Secret is
 	// named apart from the cluster's own repo credentials, which can use the
 	// same repo name.
-	path := backupstorageclasses.BackupPath(bs.Spec.Location, sourceInstance.Namespace, sourceInstance.Name, sourceInstance.UID, storageName)
+	path := backupv1alpha1.BackupPath(bs.Spec.Location, sourceInstance.Namespace, sourceInstance.Name, sourceInstance.UID, storageName)
 	r, err := buildPGBackRestS3Repo(c, bs, *repoName, path, c.Name()+"-pgbackrest-datasource-creds")
 	if err != nil {
 		return nil, nil, &controller.DataSourceConfigError{

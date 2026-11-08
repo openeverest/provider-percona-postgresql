@@ -13,8 +13,10 @@ import (
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
-	"github.com/openeverest/openeverest/v2/pkg/backupstorageclasses"
+	"github.com/openeverest/openeverest/v2/backupstorageclasses"
+	s3class "github.com/openeverest/openeverest/v2/backupstorageclasses/s3"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
+	"github.com/openeverest/provider-percona-postgresql/definition/backupclasses"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	upstreamv1beta1 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/upstream.pgv2.percona.com/v1beta1"
 	corev1 "k8s.io/api/core/v1"
@@ -48,6 +50,10 @@ const (
 	// pgBackRestConfigDirectory is where the operator mounts
 	// spec.backups.pgbackrest.configuration.
 	pgBackRestConfigDirectory = "/etc/pgbackrest/conf.d"
+
+	// backupClassName is the BackupClass the provider ships, defined in
+	// definition/backupclasses.
+	backupClassName = "pg"
 )
 
 // Mirror implements controller.BackupMirror (optional). The runtime invokes
@@ -531,7 +537,7 @@ func buildPGBackRestS3Repo(c *controller.Context, bs *backupv1alpha1.BackupStora
 	if err != nil {
 		return pgBackRestS3Repo{}, err
 	}
-	if s3.EffectiveImplementation() == backupstorageclasses.S3ImplementationGCS {
+	if s3.EffectiveImplementation() == s3class.ImplementationGCS {
 		return pgBackRestS3Repo{}, fmt.Errorf("pgBackRest cannot use GCS through its S3 API: %w", controller.ErrImplementationUnsupported)
 	}
 	endpoint, err := s3.Endpoint()
@@ -541,7 +547,7 @@ func buildPGBackRestS3Repo(c *controller.Context, bs *backupv1alpha1.BackupStora
 	if !endpoint.Secure {
 		return pgBackRestS3Repo{}, fmt.Errorf("pgBackRest cannot reach S3 over plain HTTP: %w", backupstorageclasses.ErrUnsupportedParameter)
 	}
-	tls, err := c.BackupStorageTLS(bs, controller.TLSSupport{CustomCA: true, SkipVerify: true})
+	tls, err := c.BackupStorageTLS(bs, backupclasses.TLSSupport(backupClassName, s3class.ClassName))
 	if err != nil {
 		return pgBackRestS3Repo{}, err
 	}

@@ -47,5 +47,6 @@ spec:
     - name: s3
       authModes:
         - AccessKey
-  supportedProviders:
-    - provider-percona-postgresql
+  providerManaged:
+    providerRef:
+      name: provider-percona-postgresql
