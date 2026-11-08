@@ -206,7 +206,7 @@ spec:
                 backup:
                   enabled: true
                   classRef:
-                    name: percona-backup-postgresql
+                    name: pg
                   storages:
                     # Must match the storage the source stream is archived to so the
                     # provider can read the WAL; a schedule keeps the provider from

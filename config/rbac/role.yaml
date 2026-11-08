@@ -41,11 +41,18 @@ rules:
   - backup.openeverest.io
   resources:
   - backupclasses
+  - backupstorageclasses
   - backupstorages
   verbs:
   - get
   - list
   - watch
+- apiGroups:
+  - backup.openeverest.io
+  resources:
+  - backupclasses/status
+  verbs:
+  - patch
 - apiGroups:
   - backup.openeverest.io
   resources:

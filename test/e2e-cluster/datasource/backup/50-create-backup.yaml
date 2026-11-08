@@ -8,6 +8,6 @@ spec:
     instanceRef:
       name: pg-src
   classRef:
-    name: percona-backup-postgresql
+    name: pg
   storageRef:
     name: seaweedfs-storage

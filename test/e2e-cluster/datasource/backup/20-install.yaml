@@ -29,24 +29,6 @@ spec:
   tls:
     insecureSkipVerify: true
 ---
-apiVersion: backup.openeverest.io/v1alpha1
-kind: BackupClass
-metadata:
-  name: percona-backup-postgresql
-spec:
-  displayName: Percona Backup for PostgreSQL
-  executionMode: ProviderManaged
-  backupStorageClasses:
-    - name: s3
-      authModes:
-        - AccessKey
-  supportedProviders:
-    - provider-percona-postgresql
-  providerManaged:
-    supportsPITR: true
-    limits:
-      maxPITREnabledStorages: 1
----
 # The monitoring-pmm chart's pmm class, rendered with its default values and
 # without its display fields and UI hints, under a test-local name.
 apiVersion: monitoring.openeverest.io/v1alpha1
