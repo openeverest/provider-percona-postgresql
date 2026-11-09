@@ -351,6 +351,22 @@ ui:
                         regex:
                             pattern: '^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$'
                             message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_connections: "500"'
+                pgHBA:
+                    uiType: text
+                    path: spec.components.engine.parameters.pgHBA
+                    fieldParams:
+                        label: Client access rules (pg_hba)
+                        placeholder: |
+                            hostssl orders orders_app 10.0.0.0/8 scram-sha-256
+                            host    orders all        all        reject
+                        helperText: "Optional. One pg_hba.conf record per line, checked in order before the default rule that admits every user over TLS with a password; end with a reject record to allow only what is listed. Methods: scram-sha-256, md5, cert, ldap, radius, reject."
+                        multiline: true
+                        minRows: 3
+                        maxRows: 10
+                    validation:
+                        regex:
+                            pattern: '^([ \t]*(#.*)?|[ \t]*(host|hostssl|hostnossl)[ \t]+\S.*)(\r?\n([ \t]*(#.*)?|[ \t]*(host|hostssl|hostnossl)[ \t]+\S.*))*[ \t\r\n]*$'
+                            message: 'Each line must be a host, hostssl or hostnossl record (or a # comment), e.g. hostssl orders orders_app 10.0.0.0/8 scram-sha-256'
                 podSchedulingPolicy:
                   uiType: group
                   groupType: bordered
@@ -364,6 +380,7 @@ ui:
                     - policy
             componentsOrder:
               - configuration
+              - pgHBA
               - podSchedulingPolicy
     sectionsOrder:
         - databaseVersion

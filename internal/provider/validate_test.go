@@ -111,6 +111,13 @@ func TestValidate(t *testing.T) {
 			want: []string{"spec.components[engine].parameters.configuration"},
 		},
 		{
+			name: "pg_hba record with the trust method",
+			mutate: component(common.ComponentEngine, func(c *corev1alpha1.ComponentSpec) {
+				c.Parameters = &runtime.RawExtension{Raw: []byte(`{"pgHBA":"hostssl app app 10.0.0.0/8 scram-sha-256\nhost all all all trust"}`)}
+			}),
+			want: []string{"spec.components[engine].parameters.pgHBA"},
+		},
+		{
 			name: "proxy configuration that is not key/value pairs",
 			mutate: component(common.ComponentProxy, func(c *corev1alpha1.ComponentSpec) {
 				c.Parameters = &runtime.RawExtension{Raw: []byte(`{"configuration":"- a\n- b\n"}`)}

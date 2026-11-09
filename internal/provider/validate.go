@@ -60,6 +60,11 @@ func (p *Provider) Validate(in controller.ValidationInput) controller.Validation
 				enginePath.Child("parameters", "configuration"), field.OmitValueType{}, err.Error(),
 			))
 		}
+		if err := validateEngineHBA(engine); err != nil {
+			errs = append(errs, field.Invalid(
+				enginePath.Child("parameters", "pgHBA"), field.OmitValueType{}, err.Error(),
+			))
+		}
 		if err := validateSpreadConstraints(engine.SchedulingPolicy); err != nil {
 			errs = append(errs, field.Invalid(
 				enginePath.Child("schedulingPolicy", "topologySpreadConstraints"), field.OmitValueType{}, err.Error(),
