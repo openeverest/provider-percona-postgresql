@@ -261,6 +261,76 @@ ui:
             - proxyRequests
             - proxyExposure
             - proxyConfiguration
+        tls:
+            label: "TLS"
+            description: "Encrypt connections to your database and between its members."
+            components:
+                mode:
+                    uiType: select
+                    path: spec.parameters.tls.mode
+                    fieldParams:
+                        label: "TLS mode"
+                        defaultValue: "preferTLS"
+                        helperText: "pgBouncer always requires TLS from clients; this controls direct connections to PostgreSQL."
+                        options:
+                            - label: "Preferred: direct clients choose whether to use TLS"
+                              value: "preferTLS"
+                            - label: "Required: all connections must use TLS"
+                              value: "requireTLS"
+                    validation:
+                        required: true
+                certificates:
+                    uiType: group
+                    groupType: bordered
+                    label: "Certificates"
+                    description: "Leave empty to have certificates issued for the instance: by cert-manager when it is installed, otherwise by a CA created for the instance. Can't be changed after the instance is created."
+                    components:
+                        certificateSecretName:
+                            uiType: text
+                            path: spec.parameters.tls.certificateSecretName
+                            fieldParams:
+                                label: "Certificate secret"
+                                helperText: "Secret with tls.crt, tls.key and ca.crt that clients connect to"
+                                modes:
+                                    edit:
+                                        disabled: true
+                            validation:
+                                celExpressions:
+                                    - celExpr: "!has(spec.parameters.tls.certificateSecretName) || spec.parameters.tls.certificateSecretName == '' || !has(spec.parameters.tls.rootCASecretName) || spec.parameters.tls.rootCASecretName == ''"
+                                      message: "Use either certificate secrets or a root CA secret, not both"
+                        replicationCertificateSecretName:
+                            uiType: text
+                            path: spec.parameters.tls.replicationCertificateSecretName
+                            fieldParams:
+                                label: "Replication certificate secret"
+                                helperText: "For connections between members; must share the same ca.crt as the certificate secret"
+                                modes:
+                                    edit:
+                                        disabled: true
+                            validation:
+                                celExpressions:
+                                    - celExpr: "!has(spec.parameters.tls.replicationCertificateSecretName) || spec.parameters.tls.replicationCertificateSecretName == '' || (has(spec.parameters.tls.certificateSecretName) && spec.parameters.tls.certificateSecretName != '')"
+                                      message: "Set the certificate secret as well"
+                        rootCASecretName:
+                            uiType: text
+                            path: spec.parameters.tls.rootCASecretName
+                            fieldParams:
+                                label: "Root CA secret"
+                                helperText: "Secret with root.crt and root.key the operator signs generated certificates with"
+                                modes:
+                                    edit:
+                                        disabled: true
+                            validation:
+                                celExpressions:
+                                    - celExpr: "!has(spec.parameters.tls.rootCASecretName) || spec.parameters.tls.rootCASecretName == '' || !has(spec.parameters.tls.certificateSecretName) || spec.parameters.tls.certificateSecretName == ''"
+                                      message: "Use either a root CA secret or certificate secrets, not both"
+                    componentsOrder:
+                        - certificateSecretName
+                        - replicationCertificateSecretName
+                        - rootCASecretName
+            componentsOrder:
+                - mode
+                - certificates
         advanced:
             label: Advanced Configuration
             description: Fine-tune PostgreSQL by overriding its default configuration parameters.
@@ -299,4 +369,5 @@ ui:
         - databaseVersion
         - resources
         - proxy
+        - tls
         - advanced

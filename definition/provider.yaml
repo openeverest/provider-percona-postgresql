@@ -2,6 +2,16 @@
 # Edit this file to add or remove components.
 # Run `make generate` after making changes.
 
+# Provider identity and component definitions.
+# Edit this file to add or remove components.
+# Run `make generate` after making changes.
+
+name: provider-percona-postgresql
+
+# Instance-wide parameters (Instance.spec.parameters), a Go type in
+# definition/types.go.
+parametersSchema: Parameters
+
 components:
     engine:
         type: postgresql
@@ -9,4 +19,3 @@ components:
     proxy:
         type: pgbouncer
         parametersSchema: PgbouncerParameters
-name: provider-percona-postgresql

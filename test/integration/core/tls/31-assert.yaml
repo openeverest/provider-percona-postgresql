@@ -1,0 +1,11 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-tls-bothset
+status:
+  # See the comment in 30-assert.yaml: a brand-new Instance that fails
+  # validation is left Pending, not Failed.
+  phase: Pending
+  (conditions[?type == 'Ready'] | [0].status): "False"
+  (conditions[?type == 'Ready'] | [0].reason): ValidationFailed
+

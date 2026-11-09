@@ -1,0 +1,140 @@
+---
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: core-tls
+spec:
+  description: |
+    TLS certificate configuration (spec.parameters.tls): user-supplied
+    certificate and replication secrets are wired onto
+    PerconaPGCluster.spec.secrets and spec.proxy.pgBouncer, the CA is
+    exposed on the connection secret, the certificate source cannot change
+    on an existing instance, and invalid configurations (an incomplete
+    secret, or certificate secrets and a root CA secret set together) are
+    rejected before the operator CR is ever created.
+    The Percona operator is scaled to 0 so status is simulated, matching
+    other integration suites.
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-percona-postgresql
+        tail: 100
+  steps:
+    - name: scale-down-pg-operator
+      try:
+        - script:
+            content: |
+              kubectl -n provider-system scale deployment/provider-percona-postgresql-pg-operator --replicas=0
+              kubectl -n provider-system wait --for=jsonpath='{.spec.replicas}'=0 deployment/provider-percona-postgresql-pg-operator --timeout=60s
+        - assert:
+            file: 00-assert.yaml
+
+    - name: create-cluster-with-certificate-secrets
+      try:
+        - apply:
+            file: 10-create-secret.yaml
+        - apply:
+            file: 10-create-cluster.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    # Create the users secret, then simulate the cluster becoming ready. The
+    # secret must exist before the status patch triggers reconcile, otherwise
+    # connection details are omitted (the provider does not watch Secrets).
+    - name: cluster-ready
+      try:
+        - apply:
+            file: 11-cluster-ready.yaml
+        - script:
+            content: |
+              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-tls -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+              kubectl patch perconapgclusters.pgv2.percona.com/test-pg-tls --subresource status -n "$NAMESPACE" --type=merge \
+                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-tls-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":3,\"ready\":3},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
+        - assert:
+            file: 11-assert.yaml
+
+    - name: certificate-secret-is-immutable
+      try:
+        - apply:
+            file: 20-create-another-secret.yaml
+        - script:
+            content: |
+              kubectl patch instance/test-pg-tls -n "$NAMESPACE" --type=merge \
+                -p '{"spec":{"parameters":{"tls":{"certificateSecretName":"test-pg-tls-certs-2","replicationCertificateSecretName":"test-pg-tls-repl-2"}}}}'
+              # Rejecting the change does not move status.phase off Ready (see
+              # 20-assert.yaml); the Ready condition is what flips to False.
+              kubectl wait instance/test-pg-tls -n "$NAMESPACE" \
+                --for=condition=Ready=False --timeout=30s
+        - assert:
+            file: 20-assert.yaml
+
+    - name: revert-to-original-certificate-secrets
+      try:
+        - script:
+            content: |
+              kubectl patch instance/test-pg-tls -n "$NAMESPACE" --type=merge \
+                -p '{"spec":{"parameters":{"tls":{"certificateSecretName":"test-pg-tls-certs","replicationCertificateSecretName":"test-pg-tls-repl"}}}}'
+              kubectl wait instance/test-pg-tls -n "$NAMESPACE" \
+                --for=condition=Ready=True --timeout=30s
+        - assert:
+            file: 21-assert.yaml
+
+    - name: incomplete-certificate-secret-is-rejected
+      try:
+        - apply:
+            file: 30-create-cluster-incomplete-secret.yaml
+        - script:
+            content: |
+              # A brand-new Instance that fails validation is left Pending,
+              # not Failed (see 30-assert.yaml); wait on the Ready condition,
+              # which carries the actual reason.
+              kubectl wait instance/test-pg-tls-badsecret -n "$NAMESPACE" \
+                --for=condition=Ready=False --timeout=30s
+              # Validation must fail before Sync ever creates the operator CR.
+              if kubectl get perconapgclusters.pgv2.percona.com/test-pg-tls-badsecret -n "$NAMESPACE" 2>/dev/null; then
+                echo "unexpected: PerconaPGCluster test-pg-tls-badsecret was created despite an incomplete certificate secret" >&2
+                exit 1
+              fi
+        - assert:
+            file: 30-assert.yaml
+        - script:
+            content: |
+              kubectl -n "$NAMESPACE" delete instance/test-pg-tls-badsecret --ignore-not-found --wait=true
+
+    - name: certificate-secret-and-root-ca-together-is-rejected
+      try:
+        # Setting certificateSecretName and rootCASecretName together is a
+        # purely structural error the webhook can catch without looking at
+        # any Secret, so the admission webhook denies the Create request
+        # outright and the Instance is never persisted (unlike the
+        # incomplete-secret case above, which requires a Secret lookup and
+        # is therefore only caught later, inside Sync).
+        - script:
+            content: kubectl apply -n $NAMESPACE -f 31-create-cluster-secret-and-rootca.yaml
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.parameters.tls.rootCASecretName')): true
+              (contains($stderr, 'use either certificate secrets or a root CA secret, not both')): true
+
+    - name: delete-cluster
+      try:
+        - script:
+            content: |
+              kubectl -n $NAMESPACE delete instance/test-pg-tls perconapgclusters.pgv2.percona.com/test-pg-tls --wait=false --ignore-not-found && sleep 5
+              kubectl -n $NAMESPACE patch perconapgclusters.pgv2.percona.com/test-pg-tls -p '{"metadata":{"finalizers":null}}' --type merge || true
+        - wait:
+            apiVersion: core.openeverest.io/v1alpha1
+            kind: Instance
+            name: test-pg-tls
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: pgv2.percona.com/v2
+            kind: PerconaPGCluster
+            name: test-pg-tls
+            for:
+              deletion: {}
+
+
