@@ -13,7 +13,7 @@ RELEASE_FULLCOMMIT ?= $(shell git rev-parse HEAD)
 CONTAINER_TOOL ?= docker
 
 # OpenEverest branch the integration tests build the controller from.
-OPENEVEREST_BRANCH ?= main
+OPENEVEREST_BRANCH ?= backup/storage-reshape
 
 # Image URL to use all building/pushing image targets
 IMG ?= ghcr.io/openeverest/provider-percona-postgresql-dev:latest
@@ -101,11 +101,11 @@ generate: manifests helm-sync-rbac ## Run all code generation (RBAC + Helm sync 
 .PHONY: verify
 verify: ## Verify that generated files are up-to-date (for CI).
 	@$(MAKE) generate
-	@if git diff --quiet -- config/ $(CHART_DIR)/generated/; then \
+	@if git diff --quiet -- config/ definition/ $(CHART_DIR)/generated/; then \
 		echo "Generated files are up-to-date."; \
 	else \
 		echo "ERROR: Generated files are out of date. Run 'make generate' and commit the changes."; \
-		git diff -- config/ $(CHART_DIR)/generated/; \
+		git diff -- config/ definition/ $(CHART_DIR)/generated/; \
 		exit 1; \
 	fi
 
