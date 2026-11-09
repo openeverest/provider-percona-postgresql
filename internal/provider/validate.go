@@ -60,6 +60,13 @@ func (p *Provider) Validate(in controller.ValidationInput) controller.Validation
 				enginePath.Child("parameters", "configuration"), field.OmitValueType{}, err.Error(),
 			))
 		}
+		if enabled, err := logCollectorEnabled(engine); err == nil && enabled != nil && *enabled &&
+			controller.GetDefaultImage(spec, componentTypeFluentBit) == "" {
+			errs = append(errs, field.Invalid(
+				enginePath.Child("parameters", "logCollector", "enabled"), true,
+				"the provider's catalog has no default "+componentTypeFluentBit+" image",
+			))
+		}
 		if err := validateSpreadConstraints(engine.SchedulingPolicy); err != nil {
 			errs = append(errs, field.Invalid(
 				enginePath.Child("schedulingPolicy", "topologySpreadConstraints"), field.OmitValueType{}, err.Error(),

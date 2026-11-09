@@ -70,6 +70,7 @@ provider itself is covered under [Installation](#installation).
 | Exposure | ✅ | `spec.components.proxy.service.serviceType`: `ClusterIP` (default), `LoadBalancer` or `NodePort`; applies to pgBouncer, so it needs `proxy.replicas` ≥ 1 |
 | Monitoring | ✅ | PMM 3, via a `spec.monitoring.destinations` entry naming a `MonitoringDestination` of a `pmm` class |
 | TLS | ✅ | on by default; generated, or your own certificates — see [TLS](#tls) |
+| Logs | ✅ | on by default for new instances: PostgreSQL and pgBackRest logs streamed by a log collector sidecar — see [Logs](#logs) |
 
 Stateful workloads additionally report:
 
@@ -212,9 +213,10 @@ are not a simple `spec.version` bump. Minor upgrades within a major version are 
   (`kubectl get provider provider-percona-postgresql -o yaml`). The provider rejects an
   Instance that does not match them, and the UI checks the form against them as you type.
 
-This provider currently exposes one technology-specific parameter beyond the shared
-component fields (replicas, resources, storage): `engine.parameters.configuration`,
-covered in [Custom PostgreSQL configuration](#custom-postgresql-configuration).
+Technology-specific parameters beyond the shared component fields (replicas, resources,
+storage) include `engine.parameters.configuration`, covered in
+[Custom PostgreSQL configuration](#custom-postgresql-configuration), and
+`engine.parameters.logCollector`, covered in [Logs](#logs).
 
 When the instance sends to a PMM destination, its PostgreSQL metrics in PMM carry `namespace`
 and `core_openeverest_io_instance` labels, so they can be queried per instance.
@@ -253,6 +255,41 @@ spec:
 - **Clients** need only the CA to verify the instance: the connection secret
   (`.status.connectionSecretRef.name`) carries it as `ca.crt`, and its `uri` sets `sslmode`
   to match the mode and how clients reach the instance.
+
+### Logs
+
+PostgreSQL writes its server logs to files on the data volume
+(`/pgdata/pgNN/log/`). The operator's
+[log collector](https://docs.percona.com/percona-operator-for-postgresql/3.1.0/persistent-logging.html)
+adds two sidecars to each instance pod: `logs` (Fluent Bit) streams those logs and the
+pgBackRest logs to its stdout as JSON lines, where `kubectl logs` and the cluster's log
+shipper pick them up, and `logrotate` caps the files on the data volume (rotated at 100 MB,
+7 kept).
+
+```bash
+kubectl logs <instance-pod> -c logs
+```
+
+```yaml
+spec:
+  components:
+    engine:
+      parameters:
+        logCollector:
+          enabled: false   # unset: on for new instances, existing ones unchanged
+```
+
+- **Unset** turns it on for new instances and leaves existing instances as they are, so
+  instances created before the log collector was available stay without it and upgrading
+  the provider doesn't restart them. Set `enabled: true` to add it to an existing instance.
+- Turning it on or off **restarts the instance pods** to add or remove the sidecars.
+- The sidecars request 50m CPU and 64Mi memory each, limited to 350m and 200Mi. The image
+  is the `fluentbit` entry of the [version catalog](definition/versions.yaml).
+- The UI shows the switch under **Advanced Configuration**, on for new instances. Editing
+  an existing instance shows it as set in the spec, off when unset: if an instance was
+  created through the API without `enabled`, set it to keep the collector on.
+- Logs are kept by the cluster's log pipeline, not the database: the files on the data
+  volume only hold the latest rotations.
 
 ## Development
 

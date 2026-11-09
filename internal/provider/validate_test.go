@@ -111,6 +111,18 @@ func TestValidate(t *testing.T) {
 			want: []string{"spec.components[engine].parameters.configuration"},
 		},
 		{
+			name: "log collector turned off",
+			mutate: component(common.ComponentEngine, func(c *corev1alpha1.ComponentSpec) {
+				c.Parameters = &runtime.RawExtension{Raw: []byte(`{"logCollector":{"enabled":false}}`)}
+			}),
+		},
+		{
+			name: "log collector turned on",
+			mutate: component(common.ComponentEngine, func(c *corev1alpha1.ComponentSpec) {
+				c.Parameters = &runtime.RawExtension{Raw: []byte(`{"logCollector":{"enabled":true}}`)}
+			}),
+		},
+		{
 			name: "proxy configuration that is not key/value pairs",
 			mutate: component(common.ComponentProxy, func(c *corev1alpha1.ComponentSpec) {
 				c.Parameters = &runtime.RawExtension{Raw: []byte(`{"configuration":"- a\n- b\n"}`)}

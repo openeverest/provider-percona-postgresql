@@ -35,4 +35,21 @@ type PostgresqlParameters struct {
 	// applied on top of, and overrides, the operator's built-in defaults.
 	// +optional
 	Configuration string `json:"configuration,omitempty"`
+
+	// LogCollector configures the operator's log collector: a Fluent Bit
+	// "logs" sidecar on each instance pod that streams PostgreSQL and
+	// pgBackRest logs to its stdout as JSON, plus a "logrotate" sidecar that
+	// caps the log files on the data volume.
+	// +optional
+	LogCollector *LogCollectorParameters `json:"logCollector,omitempty"`
+}
+
+// LogCollectorParameters configures the log collector.
+type LogCollectorParameters struct {
+	// Enabled turns the log collector on or off. Unset turns it on for new
+	// instances and leaves existing ones as they are (off for instances
+	// created before the log collector was available). Changing it restarts
+	// the instance pods.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 }

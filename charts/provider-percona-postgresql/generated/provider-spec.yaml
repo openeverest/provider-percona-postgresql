@@ -2,6 +2,11 @@
 # Do not edit manually. Run `make generate` to update.
 spec:
   componentTypes:
+    fluentbit:
+      defaultVersion: 5.1.1-1
+      versions:
+        - image: percona/fluentbit:5.1.1-1
+          version: 5.1.1-1
     pgbackrest:
       defaultVersion: 2.59.0-1
       versions:
@@ -84,6 +89,21 @@ spec:
 
                 applied on top of, and overrides, the operator's built-in defaults.
               type: string
+            logCollector:
+              description: |-
+                LogCollector configures the operator's log collector: a Fluent Bit
+                "logs" sidecar on each instance pod that streams PostgreSQL and
+                pgBackRest logs to its stdout as JSON, plus a "logrotate" sidecar that
+                caps the log files on the data volume.
+              properties:
+                enabled:
+                  description: |-
+                    Enabled turns the log collector on or off. Unset turns it on for new
+                    instances and leaves existing ones as they are (off for instances
+                    created before the log collector was available). Changing it restarts
+                    the instance pods.
+                  type: boolean
+              type: object
           type: object
       type: postgresql
     proxy:
@@ -196,6 +216,16 @@ spec:
                 regex:
                   message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_connections: "500"'
                   pattern: ^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$
+            logCollector:
+              fieldParams:
+                defaultValue: true
+                helperText: Streams PostgreSQL and pgBackRest logs to the instance pods' "logs" container (kubectl logs <pod> -c logs) and rotates the log files on the data volume. Adds two sidecars to each instance pod; changing it restarts them.
+                label: Collect logs
+                modes:
+                  edit:
+                    defaultValue: false
+              path: spec.components.engine.parameters.logCollector.enabled
+              uiType: toggle
             podSchedulingPolicy:
               components:
                 policy:
@@ -209,6 +239,7 @@ spec:
               uiType: group
           componentsOrder:
             - configuration
+            - logCollector
             - podSchedulingPolicy
           description: Fine-tune PostgreSQL by overriding its default configuration parameters.
           label: Advanced Configuration

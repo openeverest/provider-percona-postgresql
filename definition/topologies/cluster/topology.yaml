@@ -351,6 +351,17 @@ ui:
                         regex:
                             pattern: '^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$'
                             message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_connections: "500"'
+                logCollector:
+                    uiType: toggle
+                    path: spec.components.engine.parameters.logCollector.enabled
+                    fieldParams:
+                        label: Collect logs
+                        helperText: "Streams PostgreSQL and pgBackRest logs to the instance pods' \"logs\" container (kubectl logs <pod> -c logs) and rotates the log files on the data volume. Adds two sidecars to each instance pod; changing it restarts them."
+                        defaultValue: true
+                        modes:
+                            edit:
+                                # Unset on an existing instance means off unless it was created with it on.
+                                defaultValue: false
                 podSchedulingPolicy:
                   uiType: group
                   groupType: bordered
@@ -364,6 +375,7 @@ ui:
                     - policy
             componentsOrder:
               - configuration
+              - logCollector
               - podSchedulingPolicy
     sectionsOrder:
         - databaseVersion
