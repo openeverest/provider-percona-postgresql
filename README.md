@@ -213,7 +213,10 @@ component fields (replicas, resources, storage): `engine.parameters.configuratio
 covered in [Custom PostgreSQL configuration](#custom-postgresql-configuration).
 
 When the instance sends to a PMM destination, its PostgreSQL metrics in PMM carry `namespace`
-and `core_openeverest_io_instance` labels, so they can be queried per instance.
+and `core_openeverest_io_instance` labels, so they can be queried per instance. The
+destination's and the entry's parameters are decoded with the pmm contract module
+(`github.com/openeverest/monitoring-pmm/api`): a parameter it does not know, or a `url` with a
+path, fails rendering (the binding reports Configured `RenderFailed`) instead of being ignored.
 
 ### TLS
 
