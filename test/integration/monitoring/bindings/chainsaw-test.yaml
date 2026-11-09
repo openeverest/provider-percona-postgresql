@@ -6,12 +6,13 @@ metadata:
 spec:
   description: |
     PMM through Instance.spec.monitoring.destinations[]: core materialises a
-    ProviderManaged binding for the pmm entry, the provider renders
-    PerconaPGCluster.spec.pmm from it and mirrors the destination token,
-    keeps that rendering while the destination is gone, and disables PMM
-    and deletes the token copy once the entry is dropped. The monitoring-pmm
-    controller is not installed, so the class is claimed by hand; the Percona
-    operator is scaled to 0.
+    ProviderManaged binding for the pmm entry and refuses deleting the
+    destination while the Instance lists it; the provider renders
+    PerconaPGCluster.spec.pmm from the binding and mirrors the destination
+    token, keeps that rendering if the destination disappears anyway, and
+    disables PMM and deletes the token copy once the entry is dropped. The
+    monitoring-pmm controller is not installed, so the class is claimed by
+    hand; the Percona operator is scaled to 0.
   catch:
     - script:
         content: kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com,monitoringdestination,monitoringbinding,secret -o yaml
@@ -53,13 +54,36 @@ spec:
         - assert:
             file: 10-assert.yaml
 
+    # Core refuses deleting a destination an Instance lists. Force it through
+    # (a deletion admitted on a stale count, then the in-use finalizer
+    # removed) to cover a destination that disappears anyway.
     - name: delete-destination
       try:
-        - delete:
-            ref:
+        - assert:
+            resource:
               apiVersion: monitoring.openeverest.io/v1alpha1
               kind: MonitoringDestination
-              name: pmm-it
+              metadata:
+                name: pmm-it
+              status:
+                attachedInstances: 1
+        - script:
+            content: kubectl -n $NAMESPACE delete monitoringdestination/pmm-it --wait=false
+            check:
+              ($error != null): true
+              (contains($stderr, 'in use by 1 database')): true
+        - script:
+            content: |
+              set -e
+              kubectl -n $NAMESPACE patch monitoringdestination/pmm-it --subresource=status --type=merge -p '{"status":{"attachedInstances":0}}'
+              kubectl -n $NAMESPACE delete monitoringdestination/pmm-it --wait=false
+              kubectl -n $NAMESPACE patch monitoringdestination/pmm-it --type=merge -p '{"metadata":{"finalizers":null}}'
+        - error:
+            resource:
+              apiVersion: monitoring.openeverest.io/v1alpha1
+              kind: MonitoringDestination
+              metadata:
+                name: pmm-it
         - assert:
             file: 20-assert.yaml
 
