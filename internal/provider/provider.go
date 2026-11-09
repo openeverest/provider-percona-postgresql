@@ -218,6 +218,14 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
+	pgHBA, err := engineHBA(engine)
+	if err != nil {
+		return err
+	}
+	if err := applyPgHBA(cluster, pgHBA, tls); err != nil {
+		return err
+	}
+
 	if err := applyProxyConfiguration(cluster, proxy); err != nil {
 		return err
 	}
