@@ -1,27 +1,27 @@
 package provider
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net/url"
 	"regexp"
-	"slices"
 
+	pmm "github.com/openeverest/monitoring-pmm/api"
 	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	pgv2 "github.com/percona/percona-postgresql-operator/v3/pkg/apis/pgv2.percona.com/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
 	// pmmIntegration is the integration declared in definition/monitoring.yaml.
-	pmmIntegration         = "pmm"
-	pmmDestinationTokenKey = "token"
+	pmmIntegration         = pmm.IntegrationName
+	pmmDestinationTokenKey = pmm.KeyToken
 	pgPMMServerToken       = "PMM_SERVER_TOKEN"
 	pmmSecretSuffix        = "-pmm-secret"
 )
@@ -32,18 +32,6 @@ func (p *Provider) MonitoringIntegrations() []string {
 }
 
 var _ controller.MonitoringIntegrationsProvider = (*Provider)(nil)
-
-// pmmDestinationParameters is MonitoringDestination.spec.parameters of the
-// pmm class.
-type pmmDestinationParameters struct {
-	URL string `json:"url"`
-}
-
-// pmmInstanceParameters is Instance.spec.monitoring.destinations[].parameters
-// of the pmm class.
-type pmmInstanceParameters struct {
-	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
-}
 
 // renderFailedError marks inputs the binding cannot be rendered from. It is
 // reported on the binding; any other error fails Sync and is retried.
@@ -68,16 +56,16 @@ func applyPMM(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
 		return fmt.Errorf("get PerconaPGCluster %q: %w", c.Name(), err)
 	}
 
-	pmm := req.Integrations[pmmIntegration]
-	if !pmm.Else(live.PMMEnabled()) {
+	requirement := req.Integrations[pmmIntegration]
+	if !requirement.Else(live.PMMEnabled()) {
 		cluster.Spec.PMM = nil
-		if pmm == controller.NotRequired && !live.PMMEnabled() {
+		if requirement == controller.NotRequired && !live.PMMEnabled() {
 			return deletePMMSecret(c)
 		}
 		return nil
 	}
 	cluster.Spec.PMM = live.Spec.PMM.DeepCopy()
-	if pmm != controller.Required {
+	if requirement != controller.Required {
 		return nil
 	}
 
@@ -107,17 +95,20 @@ func applyPMM(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
 }
 
 // renderPMM builds spec.pmm for an Apply-able pmm binding and mirrors the
-// destination's token into the Secret the operator reads it from.
+// destination's token into the Secret the operator reads it from. The
+// parameters are decoded with the pmm contract's strict decoders, so a
+// parameter this build does not know fails rendering instead of being
+// ignored.
 func renderPMM(c *controller.Context, rb controller.ResolvedBinding) (*pgv2.PMMSpec, error) {
-	dst := pmmDestinationParameters{}
-	if rb.Destination.Spec.Parameters != nil {
-		if err := json.Unmarshal(rb.Destination.Spec.Parameters.Raw, &dst); err != nil {
-			return nil, renderFailed("decode MonitoringDestination %q parameters: %w", rb.Destination.Name, err)
-		}
+	dst, err := pmm.DecodeDestination(rawParameters(rb.Destination.Spec.Parameters))
+	if err != nil {
+		return nil, renderFailed("MonitoringDestination %q parameters: %w", rb.Destination.Name, err)
 	}
+	// The decoder accepts only a scheme, a host and a port, which is what the
+	// operator's serverHost takes.
 	u, err := url.Parse(dst.URL)
-	if err != nil || u.Host == "" {
-		return nil, renderFailed("MonitoringDestination %q parameters.url %q is not an absolute URL", rb.Destination.Name, dst.URL)
+	if err != nil {
+		return nil, renderFailed("MonitoringDestination %q parameters.url: %w", rb.Destination.Name, err)
 	}
 	// A missing Secret or key is a render failure; other API errors are retried.
 	mode, data, err := c.MonitoringCredentials(rb)
@@ -135,19 +126,10 @@ func renderPMM(c *controller.Context, rb controller.ResolvedBinding) (*pgv2.PMMS
 	if image == "" {
 		return nil, renderFailed("MonitoringClass %q sets no providerManaged.agentImage", rb.Class.Name)
 	}
-	params := pmmInstanceParameters{}
-	if rb.Binding.Spec.Parameters != nil {
-		if err := json.Unmarshal(rb.Binding.Spec.Parameters.Raw, &params); err != nil {
-			return nil, renderFailed("decode MonitoringBinding %q parameters: %w", rb.Binding.Name, err)
-		}
-	}
-	if r := params.Resources; r != nil {
-		for _, name := range slices.Sorted(maps.Keys(r.Requests)) {
-			request := r.Requests[name]
-			if limit, ok := r.Limits[name]; ok && request.Cmp(limit) > 0 {
-				return nil, renderFailed("MonitoringBinding %q parameters.resources: %s request %s exceeds its limit %s", rb.Binding.Name, name, request.String(), limit.String())
-			}
-		}
+	// The decoder also rejects a request above its own limit.
+	params, err := pmm.DecodeInstance(rawParameters(rb.Binding.Spec.Parameters))
+	if err != nil {
+		return nil, renderFailed("MonitoringBinding %q parameters: %w", rb.Binding.Name, err)
 	}
 
 	pmmSecretName := c.Name() + pmmSecretSuffix
@@ -164,10 +146,29 @@ func renderPMM(c *controller.Context, rb controller.ResolvedBinding) (*pgv2.PMMS
 		PostgresParams:    pmmAdminParams(c),
 		ImagePullPolicy:   corev1.PullIfNotPresent,
 	}
-	if params.Resources != nil {
-		spec.Resources = *params.Resources
+	if r := params.Resources; r != nil {
+		spec.Resources = corev1.ResourceRequirements{Limits: resourceList(r.Limits), Requests: resourceList(r.Requests)}
 	}
 	return spec, nil
+}
+
+func resourceList(quantities map[string]resource.Quantity) corev1.ResourceList {
+	if quantities == nil {
+		return nil
+	}
+	list := make(corev1.ResourceList, len(quantities))
+	for name, q := range quantities {
+		list[corev1.ResourceName(name)] = q
+	}
+	return list
+}
+
+// rawParameters returns the JSON of a parameters field, nil when unset.
+func rawParameters(parameters *runtime.RawExtension) []byte {
+	if parameters == nil {
+		return nil
+	}
+	return parameters.Raw
 }
 
 // pmmAdminParams returns the pmm-admin flags that label the instance's metrics

@@ -278,13 +278,31 @@ func TestApplyPMMReportsRenderFailed(t *testing.T) {
 			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
 				d.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"url":"pmm.example.com"}`)}
 			},
-			message: `MonitoringDestination "pmm" parameters.url "pmm.example.com" is not an absolute URL`,
+			message: `MonitoringDestination "pmm" parameters: invalid parameters: url "pmm.example.com" must be an http:// or https:// URL`,
+		},
+		"URL with a path, which the operator has nowhere to put": {
+			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
+				d.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"url":"https://pmm.example.com/graph"}`)}
+			},
+			message: `url "https://pmm.example.com/graph" must be an http:// or https:// URL without user information, path, query or fragment`,
+		},
+		"no destination parameters": {
+			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
+				d.Spec.Parameters = nil
+			},
+			message: `MonitoringDestination "pmm" parameters: invalid parameters: url is required`,
+		},
+		"destination parameter this build does not know": {
+			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
+				d.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"url":"https://pmm.example.com","serverHost":"pmm"}`)}
+			},
+			message: `MonitoringDestination "pmm" parameters: unsupported parameter: unknown field "serverHost"`,
 		},
 		"undecodable destination parameters": {
 			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
 				d.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"url":443}`)}
 			},
-			message: `decode MonitoringDestination "pmm" parameters`,
+			message: `MonitoringDestination "pmm" parameters: invalid parameters`,
 		},
 		"mode the class does not define": {
 			mutate: func(_ *monitoringv1alpha1.MonitoringClass, d *monitoringv1alpha1.MonitoringDestination, _ *corev1.Secret) {
@@ -319,11 +337,15 @@ func TestApplyPMMReportsRenderFailed(t *testing.T) {
 		},
 		"undecodable binding parameters": {
 			bindingParams: `{"resources":{"limits":{"memory":"lots"}}}`,
-			message:       `decode MonitoringBinding "` + monitoring.BindingName(pmmTestInstance, "pmm") + `" parameters`,
+			message:       `MonitoringBinding "` + monitoring.BindingName(pmmTestInstance, "pmm") + `" parameters: invalid parameters`,
+		},
+		"binding parameter this build does not know": {
+			bindingParams: `{"resources":{"claims":[{"name":"gpu"}]}}`,
+			message:       `MonitoringBinding "` + monitoring.BindingName(pmmTestInstance, "pmm") + `" parameters: unsupported parameter: unknown field "claims"`,
 		},
 		"request above its limit": {
 			bindingParams: `{"resources":{"requests":{"cpu":"100m","memory":"500Mi"},"limits":{"cpu":"1","memory":"400Mi"}}}`,
-			message:       `parameters.resources: memory request 500Mi exceeds its limit 400Mi`,
+			message:       `parameters: invalid parameters: resources.requests.memory 500Mi exceeds resources.limits.memory 400Mi`,
 		},
 	}
 	for name, tt := range tests {

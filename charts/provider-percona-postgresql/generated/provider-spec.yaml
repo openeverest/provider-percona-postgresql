@@ -84,6 +84,22 @@ spec:
 
                 applied on top of, and overrides, the operator's built-in defaults.
               type: string
+            pgHBA:
+              description: |-
+                PgHBA declares which clients may connect to which databases as which
+                users: pg_hba.conf records, one per line, such as
+
+                  hostssl orders orders_app 10.0.0.0/8 scram-sha-256
+                  host    orders all        all        reject
+
+                Blank lines and # comments are ignored. Records are checked in order,
+                after the operator's own rules (replication, pgBouncer, monitoring) and
+                before the default rule that lets every user in over TLS with a
+                password, so end with a reject record to allow only what is listed.
+                Records may be host, hostssl or hostnossl with the methods
+                scram-sha-256, md5, cert, ldap, radius or reject; trust is not allowed.
+                With tls.mode requireTLS, unencrypted connections stay rejected.
+              type: string
           type: object
       type: postgresql
     proxy:
@@ -196,6 +212,22 @@ spec:
                 regex:
                   message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_connections: "500"'
                   pattern: ^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$
+            pgHBA:
+              fieldParams:
+                helperText: 'Optional. One pg_hba.conf record per line, checked in order before the default rule that admits every user over TLS with a password; end with a reject record to allow only what is listed. Methods: scram-sha-256, md5, cert, ldap, radius, reject.'
+                label: Client access rules (pg_hba)
+                maxRows: 10
+                minRows: 3
+                multiline: true
+                placeholder: |
+                  hostssl orders orders_app 10.0.0.0/8 scram-sha-256
+                  host    orders all        all        reject
+              path: spec.components.engine.parameters.pgHBA
+              uiType: text
+              validation:
+                regex:
+                  message: 'Each line must be a host, hostssl or hostnossl record (or a # comment), e.g. hostssl orders orders_app 10.0.0.0/8 scram-sha-256'
+                  pattern: ^([ \t]*(#.*)?|[ \t]*(host|hostssl|hostnossl)[ \t]+\S.*)(\r?\n([ \t]*(#.*)?|[ \t]*(host|hostssl|hostnossl)[ \t]+\S.*))*[ \t\r\n]*$
             podSchedulingPolicy:
               components:
                 policy:
@@ -209,6 +241,7 @@ spec:
               uiType: group
           componentsOrder:
             - configuration
+            - pgHBA
             - podSchedulingPolicy
           description: Fine-tune PostgreSQL by overriding its default configuration parameters.
           label: Advanced Configuration
