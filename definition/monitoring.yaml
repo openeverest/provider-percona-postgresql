@@ -1,7 +1,19 @@
 # Monitoring contract, published as Provider.spec.monitoring.
 # Run `make generate` after making changes.
+#
+# integrations: operator-native integrations rendered in Sync (spec.pmm).
+# componentTypes: what each component type from provider.yaml exposes; every
+# PostgreSQL pod can run a postgres_exporter sidecar and every PgBouncer pod a
+# pgbouncer_exporter sidecar.
 
 integrations:
     pmm:
         agentVersions: ">=3.0.0 <4.0.0"
         authModes: [ServiceAccountToken]
+componentTypes:
+    postgresql:
+        kind: postgresql
+        metrics: Exporter
+    pgbouncer:
+        kind: pgbouncer
+        metrics: Exporter

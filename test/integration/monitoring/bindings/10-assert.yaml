@@ -1,6 +1,6 @@
-# Core materialises one binding for the entry; it resolves to ProviderManaged
-# and the provider reports it Configured, flagged because pmm-client does not
-# verify the PMM server certificate.
+# Core materialises one binding per entry; the pmm one resolves to
+# ProviderManaged and the provider reports it Configured, flagged because
+# pmm-client does not verify the PMM server certificate.
 apiVersion: monitoring.openeverest.io/v1alpha1
 kind: MonitoringBinding
 metadata:
@@ -28,13 +28,57 @@ status:
   (conditions[?type == 'Configured'].status | [0]): "True"
   (conditions[?type == 'Configured'].reason | [0]): AgentTLSNotVerified
 ---
+# The prometheus entry resolves to ExtensionManaged because postgresql and
+# pgbouncer declare metrics: Exporter; its Configured condition belongs to the
+# class controller, which is not running here.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringBinding
+metadata:
+  labels:
+    core.openeverest.io/instance: pg-bindings
+    monitoring.openeverest.io/entry: prometheus
+spec:
+  destinationRef:
+    name: prometheus-it
+  classRef:
+    name: prometheus-it
+  executionMode: ExtensionManaged
+status:
+  (conditions[?type == 'Accepted'].status | [0]): "True"
+---
 # spec.pmm comes from the binding: server from the destination URL, image from
-# the class, limits from the entry parameters.
+# the class, limits from the entry parameters. The exporters run because the
+# prometheus class requires metrics, and log in as the monitor user PgBouncer
+# lets read its stats.
 apiVersion: pgv2.percona.com/v2
 kind: PerconaPGCluster
 metadata:
   name: pg-bindings
 spec:
+  instances:
+    - name: instance1
+      sidecars:
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+          ports:
+            - name: metrics
+              containerPort: 9187
+  proxy:
+    pgBouncer:
+      sidecars:
+        - name: pgbouncer-exporter
+          image: quay.io/prometheuscommunity/pgbouncer-exporter:v0.12.1
+          ports:
+            - name: metrics
+              containerPort: 9127
+      config:
+        global:
+          stats_users: everest-monitor
+          auth_dbname: postgres
+  users:
+    - name: postgres
+    - name: everest-monitor
+      options: SUPERUSER
   pmm:
     enabled: true
     serverHost: pmm-it.example.com
@@ -72,4 +116,5 @@ status:
       mode: ProviderManaged
       configured: "True"
       reason: AgentTLSNotVerified
-  (conditions[?type == 'MonitoringConfigured'].status | [0]): "True"
+    (destinations[?name == 'prometheus'] | [0]):
+      mode: ExtensionManaged

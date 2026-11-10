@@ -1,0 +1,7 @@
+# The victoriametrics binding is gone with its entry.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringBinding
+metadata:
+  labels:
+    core.openeverest.io/instance: pg-bindings
+    monitoring.openeverest.io/entry: victoriametrics

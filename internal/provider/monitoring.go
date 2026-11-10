@@ -14,7 +14,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -51,9 +50,9 @@ func applyPMM(c *controller.Context, cluster *pgv2.PerconaPGCluster) error {
 	if err != nil {
 		return err
 	}
-	live := &pgv2.PerconaPGCluster{}
-	if err := c.Get(live, c.Name()); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("get PerconaPGCluster %q: %w", c.Name(), err)
+	live, err := getLiveCluster(c)
+	if err != nil {
+		return err
 	}
 
 	requirement := req.Integrations[pmmIntegration]
