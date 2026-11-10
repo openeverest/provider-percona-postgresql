@@ -111,6 +111,13 @@ func TestValidate(t *testing.T) {
 			want: []string{"spec.components[engine].parameters.configuration"},
 		},
 		{
+			name: "pg_hba record with the trust method",
+			mutate: component(common.ComponentEngine, func(c *corev1alpha1.ComponentSpec) {
+				c.Parameters = &runtime.RawExtension{Raw: []byte(`{"pgHBA":"hostssl app app 10.0.0.0/8 scram-sha-256\nhost all all all trust"}`)}
+			}),
+			want: []string{"spec.components[engine].parameters.pgHBA"},
+		},
+		{
 			name: "log collector turned off",
 			mutate: component(common.ComponentEngine, func(c *corev1alpha1.ComponentSpec) {
 				c.Parameters = &runtime.RawExtension{Raw: []byte(`{"logCollector":{"enabled":false}}`)}

@@ -70,6 +70,7 @@ provider itself is covered under [Installation](#installation).
 | Exposure | ✅ | `spec.components.proxy.service.serviceType`: `ClusterIP` (default), `LoadBalancer` or `NodePort`; applies to pgBouncer, so it needs `proxy.replicas` ≥ 1 |
 | Monitoring | ✅ | PMM 3, via a `spec.monitoring.destinations` entry naming a `MonitoringDestination` of a `pmm` class |
 | TLS | ✅ | on by default; generated, or your own certificates — see [TLS](#tls) |
+| Client access rules (pg_hba) | ✅ | `spec.components.engine.parameters.pgHBA` — which clients may connect to which databases as which users; see [Client access rules](#client-access-rules-pg_hba) |
 | Logs | ✅ | on by default for new instances: PostgreSQL and pgBackRest logs streamed by a log collector sidecar — see [Logs](#logs) |
 
 Stateful workloads additionally report:
@@ -219,7 +220,10 @@ storage) include `engine.parameters.configuration`, covered in
 `engine.parameters.logCollector`, covered in [Logs](#logs).
 
 When the instance sends to a PMM destination, its PostgreSQL metrics in PMM carry `namespace`
-and `core_openeverest_io_instance` labels, so they can be queried per instance.
+and `core_openeverest_io_instance` labels, so they can be queried per instance. The
+destination's and the entry's parameters are decoded with the pmm contract module
+(`github.com/openeverest/monitoring-pmm/api`): a parameter it does not know, or a `url` with a
+path, fails rendering (the binding reports Configured `RenderFailed`) instead of being ignored.
 
 ### TLS
 
@@ -255,6 +259,48 @@ spec:
 - **Clients** need only the CA to verify the instance: the connection secret
   (`.status.connectionSecretRef.name`) carries it as `ca.crt`, and its `uri` sets `sslmode`
   to match the mode and how clients reach the instance.
+
+### Client access rules (pg_hba)
+
+`pgHBA` declares which clients may connect to which databases as which users,
+as [`pg_hba.conf`](https://www.postgresql.org/docs/current/auth-pg-hba-conf.html)
+records, one per line (the UI has it under **Advanced Configuration**). Who may
+do what inside a database is granted with roles, for example by the
+user-management plugin.
+
+```yaml
+spec:
+  components:
+    engine:
+      parameters:
+        pgHBA: |
+          # orders: only the orders service, only from the application network
+          hostssl orders orders_app 10.42.0.0/16 scram-sha-256
+          host    orders all        all          reject
+```
+
+- Records are checked in order, first match wins. The operator's own records
+  come first (local superuser, certificate-authenticated replication,
+  pgBouncer's and monitoring's users), so `pgHBA` can't lock the operator out.
+  The default record, `hostssl all all all scram-sha-256`, comes last: anything
+  no record matches is still let in over TLS with a password. To allow only
+  what is listed, end with a `reject` record, such as `host all all all reject`.
+- With `tls.mode: requireTLS`, `hostnossl all all all reject` goes before the
+  records, so a `host` record can't admit unencrypted clients.
+- Allowed: `host`, `hostssl` and `hostnossl` records; an address that is `all`,
+  `samehost`, `samenet`, a CIDR range, an IP address and netmask, or a host
+  name; the methods `scram-sha-256`, `md5`, `cert` (`hostssl` only), `ldap`,
+  `radius` and `reject`, with `NAME=VALUE` options. The provider refuses the
+  Instance otherwise: `trust` and `password` (cleartext), `local` records,
+  `include` directives and `@file` references are not allowed. The operator
+  mirrors `ldap` records to pgBouncer.
+- The records go to the operator's `spec.authentication.rules`; Patroni
+  applies changes with a configuration reload, without a restart.
+- Connections through pgBouncer reach PostgreSQL from the pgBouncer pods, so
+  address ranges must include them.
+- Components that connect over the network, such as the user-management
+  plugin (as the superuser and as database owners), are subject to the
+  records too: don't reject them.
 
 ### Logs
 

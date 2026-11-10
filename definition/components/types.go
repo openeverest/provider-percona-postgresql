@@ -36,6 +36,22 @@ type PostgresqlParameters struct {
 	// +optional
 	Configuration string `json:"configuration,omitempty"`
 
+	// PgHBA declares which clients may connect to which databases as which
+	// users: pg_hba.conf records, one per line, such as
+	//
+	//   hostssl orders orders_app 10.0.0.0/8 scram-sha-256
+	//   host    orders all        all        reject
+	//
+	// Blank lines and # comments are ignored. Records are checked in order,
+	// after the operator's own rules (replication, pgBouncer, monitoring) and
+	// before the default rule that lets every user in over TLS with a
+	// password, so end with a reject record to allow only what is listed.
+	// Records may be host, hostssl or hostnossl with the methods
+	// scram-sha-256, md5, cert, ldap, radius or reject; trust is not allowed.
+	// With tls.mode requireTLS, unencrypted connections stay rejected.
+	// +optional
+	PgHBA string `json:"pgHBA,omitempty"`
+
 	// LogCollector configures the operator's log collector: a Fluent Bit
 	// "logs" sidecar on each instance pod that streams PostgreSQL and
 	// pgBackRest logs to its stdout as JSON, plus a "logrotate" sidecar that
