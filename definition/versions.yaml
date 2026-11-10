@@ -68,6 +68,11 @@ componentTypes:
               version: 2.58.0-2
             - image: percona/percona-pgbackrest:2.59.0-1
               version: 2.59.0-1
+    fluentbit:
+        defaultVersion: 5.1.1-1
+        versions:
+            - image: percona/fluentbit:5.1.1-1
+              version: 5.1.1-1
 
 # Version bundles used by UI (spec.version) and runtime component selection.
 defaultVersion: "18.6.1-1"

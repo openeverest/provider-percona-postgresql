@@ -226,6 +226,14 @@ func (p *Provider) Sync(c *controller.Context) error {
 		return err
 	}
 
+	logCollector, err := logCollectorEnabled(engine)
+	if err != nil {
+		return err
+	}
+	if err := applyLogCollector(cluster, logCollector, controller.GetDefaultImage(providerSpec, componentTypeFluentBit)); err != nil {
+		return err
+	}
+
 	if err := applyProxyConfiguration(cluster, proxy); err != nil {
 		return err
 	}

@@ -367,6 +367,17 @@ ui:
                         regex:
                             pattern: '^([ \t]*(#.*)?|[ \t]*(host|hostssl|hostnossl)[ \t]+\S.*)(\r?\n([ \t]*(#.*)?|[ \t]*(host|hostssl|hostnossl)[ \t]+\S.*))*[ \t\r\n]*$'
                             message: 'Each line must be a host, hostssl or hostnossl record (or a # comment), e.g. hostssl orders orders_app 10.0.0.0/8 scram-sha-256'
+                logCollector:
+                    uiType: toggle
+                    path: spec.components.engine.parameters.logCollector.enabled
+                    fieldParams:
+                        label: Collect logs
+                        helperText: "Streams PostgreSQL and pgBackRest logs to the instance pods' \"logs\" container (kubectl logs <pod> -c logs) and rotates the log files on the data volume. Adds two sidecars to each instance pod; changing it restarts them."
+                        defaultValue: true
+                        modes:
+                            edit:
+                                # Unset on an existing instance means off unless it was created with it on.
+                                defaultValue: false
                 podSchedulingPolicy:
                   uiType: group
                   groupType: bordered
@@ -381,6 +392,7 @@ ui:
             componentsOrder:
               - configuration
               - pgHBA
+              - logCollector
               - podSchedulingPolicy
     sectionsOrder:
         - databaseVersion
