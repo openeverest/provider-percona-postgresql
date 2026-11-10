@@ -44,7 +44,7 @@ CHART_DIR ?= charts/provider-percona-postgresql
 K3D_CLUSTER_NAME ?= provider-percona-postgresql-test
 
 # PG operator version used for CRD installation in CI
-PG_OPERATOR_VERSION ?= 3.0.0
+PG_OPERATOR_VERSION ?= 3.1.0
 
 # PG operator replicas to deploy alongside the provider in integration envs.
 PG_OPERATOR_REPLICA_COUNT ?= 1
