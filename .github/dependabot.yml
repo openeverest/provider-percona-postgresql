@@ -1,0 +1,30 @@
+# The percona-postgresql-operator is pinned twice: as a Go module (its API types,
+# in go.mod) and as the bundled Helm subchart pg-operator
+# (charts/provider-percona-postgresql/Chart.yaml). Both are placed in one
+# multi-ecosystem group so a new operator release arrives as a single PR that
+# bumps them together.
+version: 2
+
+multi-ecosystem-groups:
+  percona-postgresql-operator:
+    schedule:
+      interval: "daily"
+    labels:
+      - "dependencies"
+
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    allow:
+      - dependency-name: "github.com/percona/percona-postgresql-operator/v2"
+    patterns:
+      - "github.com/percona/percona-postgresql-operator/v2"
+    multi-ecosystem-group: "percona-postgresql-operator"
+
+  - package-ecosystem: "helm"
+    directory: "/charts/provider-percona-postgresql"
+    allow:
+      - dependency-name: "pg-operator"
+    patterns:
+      - "pg-operator"
+    multi-ecosystem-group: "percona-postgresql-operator"
