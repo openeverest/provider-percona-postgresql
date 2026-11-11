@@ -70,6 +70,7 @@ status:
   monitoring:
     (destinations[?name == 'pmm'] | [0]):
       mode: ProviderManaged
-      configured: "True"
-      reason: AgentTLSNotVerified
+      (conditions[?type == 'Configured'] | [0]):
+        status: "True"
+        reason: AgentTLSNotVerified
   (conditions[?type == 'MonitoringConfigured'].status | [0]): "True"
