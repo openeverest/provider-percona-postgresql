@@ -39,11 +39,12 @@ spec:
         - apply:
             file: 00-install.yaml
         # Stand in for the monitoring-pmm controller: a class is usable only
-        # once its controller has claimed it.
+        # once its controller has claimed it at its current generation.
         - script:
             content: |
+              gen=$(kubectl get monitoringclass/pmm-it -o jsonpath='{.metadata.generation}')
               kubectl patch monitoringclass/pmm-it --subresource status --type merge \
-                -p '{"status":{"conditions":[{"type":"Accepted","status":"True","reason":"Accepted","message":"claimed by the test","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}'
+                -p '{"status":{"conditions":[{"type":"Accepted","status":"True","reason":"Accepted","message":"claimed by the test","observedGeneration":'"$gen"',"lastTransitionTime":"2026-01-01T00:00:00Z"}]}}'
         - assert:
             file: 00-assert.yaml
 

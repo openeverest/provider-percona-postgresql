@@ -19,3 +19,12 @@ components:
     proxy:
         type: pgbouncer
         parametersSchema: PgbouncerParameters
+
+# Component types: the kind of the software each type runs, published as
+# Provider.spec.componentTypes.<type>.kind and matched by monitoring classes.
+# Version catalogs stay in versions.yaml.
+componentTypes:
+    postgresql:
+        kind: postgresql
+    pgbouncer:
+        kind: pgbouncer

@@ -13,6 +13,7 @@ spec:
           version: 2.58.0-2
     pgbouncer:
       defaultVersion: 1.25.2-1
+      kind: pgbouncer
       versions:
         - image: percona/percona-pgbouncer:1.25.0-1
           version: 1.25.0-1
@@ -22,6 +23,7 @@ spec:
           version: 1.25.2-1
     postgresql:
       defaultVersion: 18.4-1
+      kind: postgresql
       versions:
         - image: percona/percona-distribution-postgresql:18.4-1
           version: 18.4-1
