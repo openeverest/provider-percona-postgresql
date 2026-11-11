@@ -43,11 +43,14 @@ var _ controller.ProviderInterface = (*Provider)(nil)
 // Provider implements controller.ProviderInterface for the provider-percona-postgresql provider.
 type Provider struct {
 	controller.BaseProvider
+
+	// exec runs pgBackRest commands in the repo host pod.
+	exec podExecutor
 }
 
 // New creates a new Provider instance.
 func New() *Provider {
-	p := &Provider{}
+	p := &Provider{exec: &restPodExecutor{}}
 
 	p.BaseProvider = controller.BaseProvider{
 		ProviderName: common.ProviderName,
