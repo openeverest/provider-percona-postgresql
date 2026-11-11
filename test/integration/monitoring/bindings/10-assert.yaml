@@ -73,4 +73,8 @@ status:
       (conditions[?type == 'Configured'] | [0]):
         status: "True"
         reason: AgentTLSNotVerified
+      # No extension probes pmm-it here, so its Ready stays Pending.
+      (conditions[?type == 'Ready'] | [0]):
+        status: Unknown
+        reason: Pending
   (conditions[?type == 'MonitoringConfigured'].status | [0]): "True"

@@ -9,7 +9,9 @@ spec:
     ProviderManaged binding for the pmm entry and refuses deleting the
     destination while the Instance lists it; the provider renders
     PerconaPGCluster.spec.pmm from the binding and mirrors the destination
-    token, keeps that rendering if the destination disappears anyway, and
+    token. A pmm destination that rejects its token leaves the pmm entry
+    Configured but not Ready. The provider keeps the rendering if the
+    destination disappears anyway, and
     disables PMM and deletes the token copy once the entry is dropped. The
     monitoring-pmm controller is not installed, so the class is claimed by
     hand; the Percona operator is scaled to 0.
@@ -54,6 +56,32 @@ spec:
             file: 10-create-cluster.yaml
         - assert:
             file: 10-assert.yaml
+
+    # Stand in for the pmm extension's probe: the server rejects the token.
+    - name: pmm-destination-rejects-the-token
+      try:
+        - script:
+            content: |
+              set -e
+              gen=$(kubectl get monitoringdestination/pmm-it -n $NAMESPACE -o jsonpath='{.metadata.generation}')
+              patch=$(kubectl get monitoringdestination/pmm-it -n $NAMESPACE -o json | jq -c --argjson gen "$gen" \
+                '{status: {conditions: ([.status.conditions[]? | select(.type != "Ready")] + [{type: "Ready", status: "False", reason: "Unauthorized", message: "probed by the test", observedGeneration: $gen, lastTransitionTime: "2026-01-01T00:00:00Z"}])}}')
+              kubectl patch monitoringdestination/pmm-it -n $NAMESPACE --subresource status --type merge -p "$patch"
+        - assert:
+            file: 11-pmm-unauthorized-assert.yaml
+
+    # The token is replaced and the probe succeeds.
+    - name: pmm-destination-accepts-the-token
+      try:
+        - script:
+            content: |
+              set -e
+              gen=$(kubectl get monitoringdestination/pmm-it -n $NAMESPACE -o jsonpath='{.metadata.generation}')
+              patch=$(kubectl get monitoringdestination/pmm-it -n $NAMESPACE -o json | jq -c --argjson gen "$gen" \
+                '{status: {conditions: ([.status.conditions[]? | select(.type != "Ready")] + [{type: "Ready", status: "True", reason: "Ready", message: "probed by the test", observedGeneration: $gen, lastTransitionTime: "2026-01-01T00:00:00Z"}])}}')
+              kubectl patch monitoringdestination/pmm-it -n $NAMESPACE --subresource status --type merge -p "$patch"
+        - assert:
+            file: 11-pmm-ready-assert.yaml
 
     # Core refuses deleting a destination an Instance lists. Force it through
     # (a deletion admitted on a stale count, then the in-use finalizer
