@@ -6,13 +6,10 @@ spec:
   instanceRef:
     name: inst-258
   dataSource:
-    type: Backup
-    backup:
-      backupRef:
-        name: backup-1gw
-      pitr:
-        type: date
-        date: "2026-07-24T10:11:00Z"
-
-
-
+    type: PointInTime
+    pointInTime:
+      source:
+        storageRef:
+          name: my-s3-storage
+      recoveryTarget: date
+      date: "2026-07-24T10:11:00Z"
