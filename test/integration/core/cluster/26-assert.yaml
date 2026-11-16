@@ -1,0 +1,60 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-pg-cluster
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  components:
+    engine:
+      type: postgresql
+      replicas: 5
+      service:
+        serviceType: NodePort
+    proxy:
+      type: pgbouncer
+      replicas: 1
+      parameters:
+        configuration: |
+          max_client_conn: "500"
+          default_pool_size: 20
+      service:
+        serviceType: LoadBalancer
+        annotations:
+          proxy-annotation: "proxy-value"
+        loadBalancerService:
+          sourceRanges:
+            - "172.16.0.0/12"
+status:
+  phase: Ready
+---
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: test-pg-cluster
+spec:
+  instances:
+    - replicas: 5
+  # Engine exposure (NodePort, from the previous step) is untouched by the
+  # proxy's own exposure settings applied in this step.
+  expose:
+    type: NodePort
+  exposeReplicas:
+    type: NodePort
+  proxy:
+    pgBouncer:
+      config:
+        global:
+          default_pool_size: "20"
+          max_client_conn: "500"
+      expose:
+        type: LoadBalancer
+        annotations:
+          proxy-annotation: "proxy-value"
+        loadBalancerSourceRanges:
+          - "172.16.0.0/12"
+status:
+  postgres:
+    size: 5
+    ready: 5
+

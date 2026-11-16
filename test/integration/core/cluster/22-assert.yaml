@@ -30,15 +30,20 @@ metadata:
 spec:
   instances:
     - replicas: 5
-  proxy:
-    pgBouncer:
-      expose:
-        type: LoadBalancer
-        annotations:
-          test-annotation: "test-value"
-        loadBalancerSourceRanges:
-          - "10.0.0.0/8"
-          - "192.168.1.100/32"
+  expose:
+    type: LoadBalancer
+    annotations:
+      test-annotation: "test-value"
+    loadBalancerSourceRanges:
+      - "10.0.0.0/8"
+      - "192.168.1.100/32"
+  exposeReplicas:
+    type: LoadBalancer
+    annotations:
+      test-annotation: "test-value"
+    loadBalancerSourceRanges:
+      - "10.0.0.0/8"
+      - "192.168.1.100/32"
 status:
   postgres:
     size: 5

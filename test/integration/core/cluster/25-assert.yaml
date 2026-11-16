@@ -28,14 +28,16 @@ metadata:
 spec:
   instances:
     - replicas: 5
+  expose:
+    type: NodePort
+  exposeReplicas:
+    type: NodePort
   proxy:
     pgBouncer:
       config:
         global:
           default_pool_size: "20"
           max_client_conn: "500"
-      expose:
-        type: NodePort
 status:
   postgres:
     size: 5

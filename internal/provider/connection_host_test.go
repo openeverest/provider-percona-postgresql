@@ -68,23 +68,25 @@ func TestApplyServiceExpose(t *testing.T) {
 	}
 
 	tests := []struct {
-		name   string
-		engine *corev1alpha1.Service
-		proxy  *corev1alpha1.Service
-		want   *pgv2.ServiceExpose
+		name           string
+		engine         *corev1alpha1.Service
+		proxy          *corev1alpha1.Service
+		wantExpose     *pgv2.ServiceExpose
+		wantExposeRepl *pgv2.ServiceExpose
+		wantProxy      *pgv2.ServiceExpose
 	}{
 		{
-			name: "no service leaves the operator default",
+			name: "no service leaves the operator defaults",
 		},
 		{
-			name:  "proxy ClusterIP",
-			proxy: service(corev1.ServiceTypeClusterIP),
-			want:  &pgv2.ServiceExpose{Type: "ClusterIP"},
+			name:      "proxy ClusterIP",
+			proxy:     service(corev1.ServiceTypeClusterIP),
+			wantProxy: &pgv2.ServiceExpose{Type: "ClusterIP"},
 		},
 		{
-			name:  "proxy NodePort",
-			proxy: service(corev1.ServiceTypeNodePort),
-			want:  &pgv2.ServiceExpose{Type: "NodePort"},
+			name:      "proxy NodePort",
+			proxy:     service(corev1.ServiceTypeNodePort),
+			wantProxy: &pgv2.ServiceExpose{Type: "NodePort"},
 		},
 		{
 			name: "proxy LoadBalancer with annotations and source ranges",
@@ -95,22 +97,45 @@ func TestApplyServiceExpose(t *testing.T) {
 					SourceRanges: corev1alpha1.SourceRanges{"10.0.0.0/8"},
 				},
 			},
-			want: &pgv2.ServiceExpose{
+			wantProxy: &pgv2.ServiceExpose{
 				Type:                     "LoadBalancer",
 				Annotations:              map[string]string{"a": "b"},
 				LoadBalancerSourceRanges: []string{"10.0.0.0/8"},
 			},
 		},
 		{
-			name:   "engine service applies when proxy has none",
-			engine: service(corev1.ServiceTypeLoadBalancer),
-			want:   &pgv2.ServiceExpose{Type: "LoadBalancer"},
+			name:           "engine LoadBalancer exposes primary and replicas, independent of proxy",
+			engine:         service(corev1.ServiceTypeLoadBalancer),
+			wantExpose:     &pgv2.ServiceExpose{Type: "LoadBalancer"},
+			wantExposeRepl: &pgv2.ServiceExpose{Type: "LoadBalancer"},
 		},
 		{
-			name:   "proxy service wins over engine service",
-			engine: service(corev1.ServiceTypeLoadBalancer),
-			proxy:  service(corev1.ServiceTypeClusterIP),
-			want:   &pgv2.ServiceExpose{Type: "ClusterIP"},
+			name:           "engine and proxy exposure are independent",
+			engine:         service(corev1.ServiceTypeLoadBalancer),
+			proxy:          service(corev1.ServiceTypeClusterIP),
+			wantExpose:     &pgv2.ServiceExpose{Type: "LoadBalancer"},
+			wantExposeRepl: &pgv2.ServiceExpose{Type: "LoadBalancer"},
+			wantProxy:      &pgv2.ServiceExpose{Type: "ClusterIP"},
+		},
+		{
+			name: "engine LoadBalancer with annotations and source ranges",
+			engine: &corev1alpha1.Service{
+				ServiceType: corev1.ServiceTypeLoadBalancer,
+				Annotations: map[string]string{"a": "b"},
+				LoadBalancerService: &corev1alpha1.LoadBalancerService{
+					SourceRanges: corev1alpha1.SourceRanges{"10.0.0.0/8"},
+				},
+			},
+			wantExpose: &pgv2.ServiceExpose{
+				Type:                     "LoadBalancer",
+				Annotations:              map[string]string{"a": "b"},
+				LoadBalancerSourceRanges: []string{"10.0.0.0/8"},
+			},
+			wantExposeRepl: &pgv2.ServiceExpose{
+				Type:                     "LoadBalancer",
+				Annotations:              map[string]string{"a": "b"},
+				LoadBalancerSourceRanges: []string{"10.0.0.0/8"},
+			},
 		},
 	}
 
@@ -123,7 +148,9 @@ func TestApplyServiceExpose(t *testing.T) {
 				corev1alpha1.ComponentSpec{Service: tt.engine},
 				corev1alpha1.ComponentSpec{Service: tt.proxy},
 			)
-			assert.Equal(t, tt.want, cluster.Spec.Proxy.PGBouncer.ServiceExpose)
+			assert.Equal(t, tt.wantExpose, cluster.Spec.Expose)
+			assert.Equal(t, tt.wantExposeRepl, cluster.Spec.ExposeReplicas)
+			assert.Equal(t, tt.wantProxy, cluster.Spec.Proxy.PGBouncer.ServiceExpose)
 		})
 	}
 }

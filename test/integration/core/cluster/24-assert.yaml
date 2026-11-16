@@ -24,10 +24,10 @@ metadata:
 spec:
   instances:
     - replicas: 5
-  proxy:
-    pgBouncer:
-      expose:
-        type: NodePort
+  expose:
+    type: NodePort
+  exposeReplicas:
+    type: NodePort
 status:
   postgres:
     size: 5

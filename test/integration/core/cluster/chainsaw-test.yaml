@@ -85,7 +85,7 @@ spec:
         - script:
             content: |
               kubectl wait perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" \
-                --for=jsonpath='{.spec.proxy.pgBouncer.expose.type}'=LoadBalancer --timeout=30s
+                --for=jsonpath='{.spec.expose.type}'=LoadBalancer --timeout=30s
               GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
               kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
                 -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
@@ -99,7 +99,7 @@ spec:
         - script:
             content: |
               kubectl wait perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" \
-                --for=jsonpath='{.spec.proxy.pgBouncer.expose.type}'=ClusterIP --timeout=30s
+                --for=jsonpath='{.spec.expose.type}'=ClusterIP --timeout=30s
               GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
               kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
                 -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
@@ -113,7 +113,7 @@ spec:
         - script:
             content: |
               kubectl wait perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" \
-                --for=jsonpath='{.spec.proxy.pgBouncer.expose.type}'=NodePort --timeout=30s
+                --for=jsonpath='{.spec.expose.type}'=NodePort --timeout=30s
               GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
               kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
                 -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
@@ -133,6 +133,20 @@ spec:
                 -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
         - assert:
             file: 25-assert.yaml
+
+    - name: update-proxy-service-independent-of-engine
+      try:
+        - apply:
+            file: 26-update-cluster-proxy-lb.yaml
+        - script:
+            content: |
+              kubectl wait perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" \
+                --for=jsonpath='{.spec.proxy.pgBouncer.expose.type}'=LoadBalancer --timeout=30s
+              GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
+              kubectl patch perconapgclusters.pgv2.percona.com/test-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
+                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":5,\"ready\":5},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
+        - assert:
+            file: 26-assert.yaml
 
     - name: create-single-node-cluster
       try:

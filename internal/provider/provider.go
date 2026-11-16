@@ -498,12 +498,23 @@ func defaultRequestsToLimits(res *corev1.ResourceRequirements) {
 }
 
 func applyServiceExpose(cluster *pgv2.PerconaPGCluster, engine, proxy corev1alpha1.ComponentSpec) {
-	svc := engine.Service
-	if proxy.Service != nil {
-		svc = proxy.Service
+	if expose := buildServiceExpose(engine.Service); expose != nil {
+		cluster.Spec.Expose = expose
 	}
-	if svc == nil || cluster.Spec.Proxy == nil || cluster.Spec.Proxy.PGBouncer == nil {
-		return
+	if expose := buildServiceExpose(engine.Service); expose != nil {
+		cluster.Spec.ExposeReplicas = expose
+	}
+
+	if expose := buildServiceExpose(proxy.Service); expose != nil {
+		if cluster.Spec.Proxy != nil && cluster.Spec.Proxy.PGBouncer != nil {
+			cluster.Spec.Proxy.PGBouncer.ServiceExpose = expose
+		}
+	}
+}
+
+func buildServiceExpose(svc *corev1alpha1.Service) *pgv2.ServiceExpose {
+	if svc == nil {
+		return nil
 	}
 
 	expose := &pgv2.ServiceExpose{
@@ -518,7 +529,7 @@ func applyServiceExpose(cluster *pgv2.PerconaPGCluster, engine, proxy corev1alph
 			expose.LoadBalancerSourceRanges = ranges
 		}
 	}
-	cluster.Spec.Proxy.PGBouncer.ServiceExpose = expose
+	return expose
 }
 
 func parseMajorVersion(version string) (int, bool) {

@@ -24,10 +24,10 @@ metadata:
 spec:
   instances:
     - replicas: 5
-  proxy:
-    pgBouncer:
-      expose:
-        type: ClusterIP
+  expose:
+    type: ClusterIP
+  exposeReplicas:
+    type: ClusterIP
 status:
   postgres:
     size: 5
