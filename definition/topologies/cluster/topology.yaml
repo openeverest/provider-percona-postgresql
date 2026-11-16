@@ -120,25 +120,6 @@ ui:
                               - memory
                     componentsOrder:
                       - requests
-                engineExposure:
-                    uiType: select
-                    path: spec.components.engine.service.serviceType
-                    fieldParams:
-                        label: "Direct database exposure"
-                        helperText: "How clients reach PostgreSQL directly, bypassing PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster. Most clients should go through the pgBouncer proxy instead; this is for clients that need a direct connection, such as logical replication subscribers."
-                        defaultValue: "ClusterIP"
-                        options:
-                            - label: "ClusterIP"
-                              value: "ClusterIP"
-                            - label: "LoadBalancer"
-                              value: "LoadBalancer"
-                            - label: "NodePort"
-                              value: "NodePort"
-                        # TODO: Support Service annotations and LoadBalancer source ranges
-                        # https://github.com/openeverest/openeverest/issues/1959
-                        # https://github.com/openeverest/openeverest/issues/2398
-                    validation:
-                        required: true
             description: Configure the resources your database will have access to.
             label: Resources
             componentsOrder:
@@ -146,7 +127,6 @@ ui:
               - diskSize
               - resourcesLimits
               - resourcesRequests
-              - engineExposure
         proxy:
           label: "Proxy"
           description: "Configure a single proxy type for the cluster."
@@ -398,10 +378,30 @@ ui:
                       widgetType: podSchedulingPolicy
                   componentsOrder:
                     - policy
+                engineExposure:
+                    uiType: select
+                    path: spec.components.engine.service.serviceType
+                    fieldParams:
+                        label: "Direct database exposure"
+                        helperText: "How clients reach PostgreSQL directly, bypassing PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster. Most clients should go through the pgBouncer proxy instead; this is for clients that need a direct connection, such as logical replication subscribers."
+                        defaultValue: "ClusterIP"
+                        options:
+                            - label: "ClusterIP"
+                              value: "ClusterIP"
+                            - label: "LoadBalancer"
+                              value: "LoadBalancer"
+                            - label: "NodePort"
+                              value: "NodePort"
+                        # TODO: Support Service annotations and LoadBalancer source ranges
+                        # https://github.com/openeverest/openeverest/issues/1959
+                        # https://github.com/openeverest/openeverest/issues/2398
+                    validation:
+                        required: true
             componentsOrder:
               - configuration
               - pgHBA
               - podSchedulingPolicy
+              - engineExposure
     sectionsOrder:
         - databaseVersion
         - resources

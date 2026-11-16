@@ -200,6 +200,22 @@ spec:
                 regex:
                   message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_connections: "500"'
                   pattern: ^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$
+            engineExposure:
+              fieldParams:
+                defaultValue: ClusterIP
+                helperText: How clients reach PostgreSQL directly, bypassing PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster. Most clients should go through the pgBouncer proxy instead; this is for clients that need a direct connection, such as logical replication subscribers.
+                label: Direct database exposure
+                options:
+                  - label: ClusterIP
+                    value: ClusterIP
+                  - label: LoadBalancer
+                    value: LoadBalancer
+                  - label: NodePort
+                    value: NodePort
+              path: spec.components.engine.service.serviceType
+              uiType: select
+              validation:
+                required: true
             pgHBA:
               fieldParams:
                 helperText: 'Optional. One pg_hba.conf record per line, checked in order before the default rule that admits every user over TLS with a password; end with a reject record to allow only what is listed. Methods: scram-sha-256, md5, cert, ldap, radius, reject.'
@@ -231,6 +247,7 @@ spec:
             - configuration
             - pgHBA
             - podSchedulingPolicy
+            - engineExposure
           description: Fine-tune PostgreSQL by overriding its default configuration parameters.
           label: Advanced Configuration
         databaseVersion:
@@ -394,22 +411,6 @@ spec:
               uiType: number
               validation:
                 min: 1
-            engineExposure:
-              fieldParams:
-                defaultValue: ClusterIP
-                helperText: How clients reach PostgreSQL directly, bypassing PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster. Most clients should go through the pgBouncer proxy instead; this is for clients that need a direct connection, such as logical replication subscribers.
-                label: Direct database exposure
-                options:
-                  - label: ClusterIP
-                    value: ClusterIP
-                  - label: LoadBalancer
-                    value: LoadBalancer
-                  - label: NodePort
-                    value: NodePort
-              path: spec.components.engine.service.serviceType
-              uiType: select
-              validation:
-                required: true
             numberOfNodes:
               fieldParams:
                 defaultValue: 2
@@ -481,7 +482,6 @@ spec:
             - diskSize
             - resourcesLimits
             - resourcesRequests
-            - engineExposure
           description: Configure the resources your database will have access to.
           label: Resources
         tls:
