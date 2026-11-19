@@ -904,3 +904,79 @@ func TestEnqueueClusterInstance(t *testing.T) {
 		})
 	}
 }
+
+// TestStatusDesiredReplicas covers how many pods the provider reports each
+// component will have: read from the Instance as Sync applies it, whatever the
+// PerconaPGCluster object runs for now.
+func TestStatusDesiredReplicas(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		spec    []func(*corev1alpha1.InstanceSpec)
+		cluster *pgv2.PerconaPGCluster
+		want    []controller.ComponentReplicas
+	}{
+		{
+			name:    "three PostgreSQL instances and one PGBouncer pod",
+			cluster: readyCluster(),
+			want: []controller.ComponentReplicas{
+				{Component: common.ComponentEngine, Desired: 3},
+				{Component: common.ComponentProxy, Desired: 1},
+			},
+		},
+		{
+			name: "scaling from 3 to 5 instances",
+			spec: []func(*corev1alpha1.InstanceSpec){func(spec *corev1alpha1.InstanceSpec) {
+				spec.Components[common.ComponentEngine] = corev1alpha1.ComponentSpec{Replicas: new(int32(5))}
+			}},
+			cluster: readyCluster(),
+			want: []controller.ComponentReplicas{
+				{Component: common.ComponentEngine, Desired: 5},
+				{Component: common.ComponentProxy, Desired: 1},
+			},
+		},
+		{
+			name: "without PGBouncer",
+			spec: []func(*corev1alpha1.InstanceSpec){func(spec *corev1alpha1.InstanceSpec) {
+				spec.Components[common.ComponentProxy] = corev1alpha1.ComponentSpec{Replicas: new(int32(0))}
+			}},
+			cluster: readyCluster(),
+			want: []controller.ComponentReplicas{
+				{Component: common.ComponentEngine, Desired: 3},
+				{Component: common.ComponentProxy, Desired: 0},
+			},
+		},
+		{
+			name: "stopped on the PerconaPGCluster object",
+			cluster: readyCluster(clusterState(pgv2.AppStatePaused), func(cluster *pgv2.PerconaPGCluster) {
+				cluster.Spec.Pause = new(true)
+			}),
+			want: []controller.ComponentReplicas{
+				{Component: common.ComponentEngine, Desired: 3},
+				{Component: common.ComponentProxy, Desired: 1},
+			},
+		},
+		{
+			name: "PerconaPGCluster object not created yet",
+			want: []controller.ComponentReplicas{
+				{Component: common.ComponentEngine, Desired: 3},
+				{Component: common.ComponentProxy, Desired: 1},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			objs := rolledOut()
+			if tt.cluster != nil {
+				objs = append(objs, tt.cluster)
+			}
+			got, err := observeStatus(statusContext(t, statusInstanceSpec(tt.spec...), nil, objs...))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got.DesiredReplicas)
+		})
+	}
+}

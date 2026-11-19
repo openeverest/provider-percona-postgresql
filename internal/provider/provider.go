@@ -135,14 +135,15 @@ func (p *Provider) Sync(c *controller.Context) error {
 	}
 
 	// Get the engine component spec
-	engine, ok := c.Instance().Spec.Components[common.ComponentEngine]
-	if !ok || engine.Replicas == nil {
+	engine := c.Instance().Spec.Components[common.ComponentEngine]
+	engineReplicas, ok := componentReplicas(c.Instance(), common.ComponentEngine)
+	if !ok {
 		return fmt.Errorf("instance spec missing %q component replicas", common.ComponentEngine)
 	}
 	if len(cluster.Spec.InstanceSets) == 0 {
 		cluster.Spec.InstanceSets = pgv2.PGInstanceSets{{Name: "instance1"}}
 	}
-	cluster.Spec.InstanceSets[0].Replicas = engine.Replicas
+	cluster.Spec.InstanceSets[0].Replicas = &engineReplicas
 	if engine.Resources != nil {
 		cluster.Spec.InstanceSets[0].Resources = *engine.Resources
 	}
@@ -192,8 +193,9 @@ func (p *Provider) Sync(c *controller.Context) error {
 		}
 	}
 
-	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]
-	if !ok || proxy.Replicas == nil {
+	proxy := c.Instance().Spec.Components[common.ComponentProxy]
+	proxyReplicas, ok := componentReplicas(c.Instance(), common.ComponentProxy)
+	if !ok {
 		return fmt.Errorf("instance spec has invalid %q component; this should be caught by Validate", common.ComponentProxy)
 	}
 
@@ -204,7 +206,7 @@ func (p *Provider) Sync(c *controller.Context) error {
 	if proxyType != controller.GetComponentType(providerSpec, common.ComponentProxy) {
 		return fmt.Errorf("instance spec has unsupported %q component type %q; only %q is supported", common.ComponentProxy, proxyType, controller.GetComponentType(providerSpec, common.ComponentProxy))
 	}
-	cluster.Spec.Proxy.PGBouncer.Replicas = proxy.Replicas
+	cluster.Spec.Proxy.PGBouncer.Replicas = &proxyReplicas
 	if proxy.Resources != nil {
 		cluster.Spec.Proxy.PGBouncer.Resources = *proxy.Resources
 	}

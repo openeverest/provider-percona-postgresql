@@ -122,12 +122,13 @@ type storageState struct {
 
 // observeStatus reports what the provider observes about the cluster: whether
 // it runs what the Instance asks for, whether clients can connect, what is
-// wrong and which long operation is running. The runtime derives the
-// Instance's phase and conditions from these facts.
+// wrong and which long operation is running, and how many pods each
+// component will have. The runtime derives the Instance's phase and
+// conditions from these facts.
 func observeStatus(c *controller.Context) (controller.Status, error) {
 	cluster, err := uncachedCluster(c)
 	if apierrors.IsNotFound(err) {
-		return controller.Progressing("Waiting for the PerconaPGCluster object to be created"), nil
+		return withDesiredReplicas(c, controller.Progressing("Waiting for the PerconaPGCluster object to be created")), nil
 	}
 	if err != nil {
 		return controller.Status{}, err
@@ -165,6 +166,7 @@ func observeStatus(c *controller.Context) (controller.Status, error) {
 		}
 		status = withUpgrade(status, cluster, pods)
 	}
+	status = withDesiredReplicas(c, status)
 
 	// The connection details are reported as soon as clients can connect,
 	// not only once the cluster has converged: whoever is told the database
@@ -594,6 +596,34 @@ func withUpgrade(status controller.Status, cluster *pgv2.PerconaPGCluster, pods 
 	slices.Sort(previous)
 	return status.WithOperation(corev1alpha1.ConditionUpgrading, reasonRollingOutImage,
 		fmt.Sprintf("Rolling out image %s (%d of %d PostgreSQL pods still run %s)", want, len(previous), total, previous[0]))
+}
+
+// componentReplicas returns how many pods the Instance asks for a component,
+// and false when it does not say. Validate requires both components to say,
+// so there is no default to apply.
+func componentReplicas(in *corev1alpha1.Instance, name string) (int32, bool) {
+	component, ok := in.Spec.Components[name]
+	if !ok || component.Replicas == nil {
+		return 0, false
+	}
+	return *component.Replicas, true
+}
+
+// withDesiredReplicas reports how many pods each component will have once the
+// cluster runs what the Instance asks for. The counts come from the Instance,
+// as Sync applies them, not from the PerconaPGCluster object, which may still
+// describe an earlier spec. A cluster stopped on that object keeps them: the
+// Instance does not ask for the stop. Every component runs pods of its own:
+// the PostgreSQL instances and PGBouncer. The provider's pgBackRest
+// repositories are all in object storage, so the operator runs no repository
+// host.
+func withDesiredReplicas(c *controller.Context, status controller.Status) controller.Status {
+	for _, name := range []string{common.ComponentEngine, common.ComponentProxy} {
+		if replicas, ok := componentReplicas(c.Instance(), name); ok {
+			status = status.WithDesiredReplicas(name, replicas)
+		}
+	}
+	return status
 }
 
 // connectionDetails reads the user Secret the operator writes and combines it
