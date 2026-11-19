@@ -6,6 +6,7 @@ kind: MonitoringClass
 metadata:
   name: pmm-it
 spec:
+  controllerName: test.openeverest.io/provider-percona-postgresql-it
   providerManaged:
     integration: pmm
     agentImage: "percona/pmm-client:3.8.0"

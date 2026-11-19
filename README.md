@@ -48,6 +48,7 @@ never manages pods directly — all lifecycle work is delegated to the operator.
 
 | provider-percona-postgresql | OpenEverest | Percona Operator for PostgreSQL | Kubernetes |
 |---|---|---|---|
+| `0.7.x` | `2.0.0-dev.5` | `3.0.x` | `1.30` – `1.34` |
 | `0.6.x` | `2.0.0-dev.4` | `3.0.x` | `1.30` – `1.34` |
 | `0.5.x` | `2.0.0-dev.4` | `3.0.x` | `1.30` – `1.34` |
 | `0.4.x` | `2.0.0-dev.4` | `3.0.x` | `1.30` – `1.34` |
@@ -67,7 +68,7 @@ provider itself is covered under [Installation](#installation).
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.<name>.resources` |
 | Version upgrades | ✅ | of the deployed PostgreSQL version — change `spec.version`; see [Versions](#versions) |
 | Custom configuration | ✅ | `spec.components.engine.parameters.configuration` — see [Custom PostgreSQL configuration](#custom-postgresql-configuration) |
-| Exposure | ✅ | `spec.components.proxy.service.serviceType`: `ClusterIP` (default), `LoadBalancer` or `NodePort`; applies to pgBouncer, so it needs `proxy.replicas` ≥ 1 |
+| Exposure | ✅ | `spec.components.<name>.service.serviceType`: `ClusterIP` (default), `LoadBalancer` or `NodePort`, for `engine` and `proxy` independently — both are exposed in the UI. `proxy.service` controls how clients reach pgBouncer (needs `proxy.replicas` ≥ 1) and is how most clients should connect; `engine.service` exposes the PostgreSQL primary and replica Services directly, bypassing pgBouncer, for clients that need a direct connection. `service.annotations` and, for `LoadBalancer`, `service.loadBalancerService.sourceRanges` are also supported on both, but only via the `Instance` spec directly — the UI doesn't expose them yet ([openeverest#1959](https://github.com/openeverest/openeverest/issues/1959), [openeverest#2398](https://github.com/openeverest/openeverest/issues/2398)) |
 | Monitoring | ✅ | PMM 3, via a `spec.monitoring.destinations` entry naming a `MonitoringDestination` of a `pmm` class |
 | TLS | ✅ | on by default; generated, or your own certificates — see [TLS](#tls) |
 | Client access rules (pg_hba) | ✅ | `spec.components.engine.parameters.pgHBA` — which clients may connect to which databases as which users; see [Client access rules](#client-access-rules-pg_hba) |
@@ -164,6 +165,35 @@ kubectl get instance my-instance -o jsonpath='{.status.connectionSecretRef.name}
 ```
 
 Connection details are in the Secret named by `.status.connectionSecretRef.name`. It has the keys `host`, `port`, `username`, `password` and `uri`.
+
+### Status
+
+The provider reports what it observes, and OpenEverest derives the `Instance` conditions from
+it the same way for every provider.
+
+| Condition | What this provider reports |
+|---|---|
+| `Available` | `True` while a PostgreSQL primary serves connections and, when clients connect through PGBouncer, a PGBouncer pod is ready. The primary is read from where Kubernetes routes connections: the EndpointSlices of the Patroni leader Service `<name>-ha`, which the operator's primary Service resolves to and which Patroni points at the pod it elected. So it stays `True` while replicas restart, and follows a failover. It is `Unknown` when those EndpointSlices cannot be read, and `False` while a restore replaces the data, while the cluster is stopped, and while a PGBouncer load balancer has no address yet. The reason says which, for example `NoPrimary` or `NoPGBouncerReady`. |
+| `Ready` | `True` once the cluster runs what the `Instance` asks for: the operator reports it ready for the latest generation of the `PerconaPGCluster`, every StatefulSet and the PGBouncer Deployment run their latest pod template, and a primary serves connections. Until then the message says what is being waited for. |
+| `Restoring` | `True` while a `Restore` of the `Instance` runs, and while a new `Instance` is seeded from `spec.dataSource`. |
+| `Upgrading` | `True` while PostgreSQL pods run another image than the one the `Instance`'s version asks for. |
+| `StorageResizing` | `True` while the volumes are being resized. |
+
+The connection details Secret is written the first time the database is available, and kept
+current while a change rolls out.
+
+Each component reports `desiredReplicas`, the pods it will have once the cluster runs the `Instance`'s current spec: `engine` is the number of PostgreSQL instances, and `proxy` the number of PGBouncer pods, `0` without PGBouncer. The provider keeps its pgBackRest repositories in object storage, so there is no repository host pod to count.
+
+A problem makes the `Instance` not `Ready`, with a reason that says what is wrong:
+
+| Reason | Cause |
+|---|---|
+| `PausedOutsideOpenEverest` | `spec.pause` is set on the `PerconaPGCluster`, which stops the database. Nothing but unsetting it there starts it again. |
+| `UnmanagedOutsideOpenEverest` | `spec.unmanaged` is set on the `PerconaPGCluster`, so the operator applies no change to the cluster. Nothing but unsetting it there applies the `Instance` again. |
+| `StorageResizeRejected` | The API server refused the operator's resize of the volumes, for example because the storage class does not allow volume expansion, or because the size shrinks. |
+| `RestoreFailed` | The pgBackRest job that restores the data failed. Its logs say why. |
+
+The operator publishes no error messages in its status, only the conditions above. Pods that crash, cannot pull their image or find no node are reported by OpenEverest from the pods themselves.
 
 ## Topologies
 
@@ -355,7 +385,8 @@ kubectl logs -n everest-system deploy/provider-percona-postgresql -f
 | Symptom | Where to look |
 |---|---|
 | `Instance` stuck in `Creating` | `kubectl describe instance <name>` conditions, then the provider logs |
-| `Instance` in `Phase: Failed` | `kubectl describe instance <name>` Events (look for `ValidationFailed`), then the provider logs |
+| `Instance` not `Ready`, reason `ValidationFailed` | `kubectl describe instance <name>` Events and the `Ready` condition's message, then the provider logs |
+| `Instance` `Stalled` | The `Ready` condition's reason and message: see [Status](#status) for the reasons this provider reports |
 | No `Provider` resource in the cluster | Is the chart installed? Check the provider deployment logs |
 | `Instance` ignored entirely | `spec.providerRef.name` must be `provider-percona-postgresql` |
 | `PerconaPGCluster` created but no pods | Inspect the `PerconaPGCluster` status — the failure is upstream in the operator |

@@ -40,9 +40,11 @@ spec:
         - assert:
             file: 10-assert.yaml
 
-    # Create the users secret, then simulate the cluster becoming ready. The
-    # secret must exist before the status patch triggers reconcile, otherwise
-    # connection details are omitted (the provider does not watch Secrets).
+    # Create the users secret and the endpoint Patroni would point at the
+    # primary, then simulate the cluster becoming ready the way the operator
+    # reports it: ready, for the latest generation. The secret must exist
+    # before the status patch triggers reconcile, otherwise connection
+    # details are omitted (the provider does not watch Secrets).
     - name: cluster-ready
       try:
         - apply:
@@ -51,7 +53,7 @@ spec:
             content: |
               GEN=$(kubectl get perconapgclusters.pgv2.percona.com/test-pg-tls -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
               kubectl patch perconapgclusters.pgv2.percona.com/test-pg-tls --subresource status -n "$NAMESPACE" --type=merge \
-                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"test-pg-tls-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":3,\"ready\":3},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
+                -p "{\"status\":{\"state\":\"ready\",\"observedGeneration\":${GEN},\"host\":\"test-pg-tls-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":3,\"ready\":3},\"pgbouncer\":{\"size\":1,\"ready\":1}}}"
         - assert:
             file: 11-assert.yaml
 
@@ -63,7 +65,7 @@ spec:
             content: |
               kubectl patch instance/test-pg-tls -n "$NAMESPACE" --type=merge \
                 -p '{"spec":{"parameters":{"tls":{"certificateSecretName":"test-pg-tls-certs-2","replicationCertificateSecretName":"test-pg-tls-repl-2"}}}}'
-              # Rejecting the change does not move status.phase off Ready (see
+              # Rejecting the change leaves status.phase Provisioned (see
               # 20-assert.yaml); the Ready condition is what flips to False.
               kubectl wait instance/test-pg-tls -n "$NAMESPACE" \
                 --for=condition=Ready=False --timeout=30s
@@ -87,9 +89,9 @@ spec:
             file: 30-create-cluster-incomplete-secret.yaml
         - script:
             content: |
-              # A brand-new Instance that fails validation is left Pending,
-              # not Failed (see 30-assert.yaml); wait on the Ready condition,
-              # which carries the actual reason.
+              # A brand-new Instance that fails validation is Pending (see
+              # 30-assert.yaml); wait on the Ready condition, which carries
+              # the actual reason.
               kubectl wait instance/test-pg-tls-badsecret -n "$NAMESPACE" \
                 --for=condition=Ready=False --timeout=30s
               # Validation must fail before Sync ever creates the operator CR.

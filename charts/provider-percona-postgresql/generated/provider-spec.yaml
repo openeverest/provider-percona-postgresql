@@ -15,6 +15,7 @@ spec:
           version: 2.59.0-1
     pgbouncer:
       defaultVersion: 1.25.2-6
+      kind: pgbouncer
       versions:
         - image: percona/percona-pgbouncer:1.25.0-1
           version: 1.25.0-1
@@ -26,6 +27,7 @@ spec:
           version: 1.25.2-6
     postgresql:
       defaultVersion: 18.6.1-1
+      kind: postgresql
       versions:
         - image: percona/percona-distribution-postgresql:18.6.1-1
           version: 18.6.1-1
@@ -212,6 +214,22 @@ spec:
                 regex:
                   message: 'Each line must be a "parameter: value" pair (or a # comment), e.g. max_connections: "500"'
                   pattern: ^([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*)(\r?\n([ \t]*(#.*)?|[ \t]*[A-Za-z_][\w.]*[ \t]*:.*))*[ \t\r\n]*$
+            engineExposure:
+              fieldParams:
+                defaultValue: ClusterIP
+                helperText: How clients reach PostgreSQL directly, bypassing PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster. Most clients should go through the pgBouncer proxy instead; this is for clients that need a direct connection, such as logical replication subscribers.
+                label: Direct database exposure
+                options:
+                  - label: ClusterIP
+                    value: ClusterIP
+                  - label: LoadBalancer
+                    value: LoadBalancer
+                  - label: NodePort
+                    value: NodePort
+              path: spec.components.engine.service.serviceType
+              uiType: select
+              validation:
+                required: true
             pgHBA:
               fieldParams:
                 helperText: 'Optional. One pg_hba.conf record per line, checked in order before the default rule that admits every user over TLS with a password; end with a reject record to allow only what is listed. Methods: scram-sha-256, md5, cert, ldap, radius, reject.'
@@ -243,6 +261,7 @@ spec:
             - configuration
             - pgHBA
             - podSchedulingPolicy
+            - engineExposure
           description: Fine-tune PostgreSQL by overriding its default configuration parameters.
           label: Advanced Configuration
         databaseVersion:
@@ -286,7 +305,7 @@ spec:
             proxyExposure:
               fieldParams:
                 defaultValue: ClusterIP
-                helperText: How clients reach PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster.
+                helperText: How clients reach PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster. For NodePort, see https://openeverest.io/docs/current/networking/nodeport_support/ for how to access your database.
                 label: Exposure
                 options:
                   - label: ClusterIP

@@ -3,7 +3,10 @@ kind: Instance
 metadata:
   name: src-pg-cluster
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'] | [0].status): "True"
+  (conditions[?type == 'Available'] | [0].status): "True"
+  (conditions[?type == 'Restoring'] | [0].status): "False"
 ---
 apiVersion: backup.openeverest.io/v1alpha1
 kind: Restore

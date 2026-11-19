@@ -99,6 +99,16 @@ spec:
       try:
         - apply:
             file: 50-other-provider-class.yaml
+        # The webhook rejects an Instance naming the class only once core
+        # has judged the class for the provider it names; until then it warns.
+        - assert:
+            resource:
+              apiVersion: backup.openeverest.io/v1alpha1
+              kind: BackupClass
+              metadata:
+                name: test-admission-other-provider
+              status:
+                (providers[?name == 'percona-xtradb-cluster'].name | [0]): percona-xtradb-cluster
         - script:
             content: kubectl apply -n $NAMESPACE -f 51-other-provider-class.yaml
             check:

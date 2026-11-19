@@ -225,7 +225,7 @@ ui:
               path: spec.components.proxy.service.serviceType
               fieldParams:
                 label: "Exposure"
-                helperText: "How clients reach PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster."
+                helperText: "How clients reach PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster. For NodePort, see https://openeverest.io/docs/current/networking/nodeport_support/ for how to access your database."
                 defaultValue: "ClusterIP"
                 options:
                   - label: "ClusterIP"
@@ -378,10 +378,30 @@ ui:
                       widgetType: podSchedulingPolicy
                   componentsOrder:
                     - policy
+                engineExposure:
+                    uiType: select
+                    path: spec.components.engine.service.serviceType
+                    fieldParams:
+                        label: "Direct database exposure"
+                        helperText: "How clients reach PostgreSQL directly, bypassing PgBouncer. ClusterIP keeps it reachable only from inside the Kubernetes cluster. Most clients should go through the pgBouncer proxy instead; this is for clients that need a direct connection, such as logical replication subscribers."
+                        defaultValue: "ClusterIP"
+                        options:
+                            - label: "ClusterIP"
+                              value: "ClusterIP"
+                            - label: "LoadBalancer"
+                              value: "LoadBalancer"
+                            - label: "NodePort"
+                              value: "NodePort"
+                        # TODO: Support Service annotations and LoadBalancer source ranges
+                        # https://github.com/openeverest/openeverest/issues/1959
+                        # https://github.com/openeverest/openeverest/issues/2398
+                    validation:
+                        required: true
             componentsOrder:
               - configuration
               - pgHBA
               - podSchedulingPolicy
+              - engineExposure
     sectionsOrder:
         - databaseVersion
         - resources

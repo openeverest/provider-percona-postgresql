@@ -104,8 +104,9 @@ spec:
         # The monitoring-pmm controller is not installed: claim its class by hand.
         - script:
             content: |
+              gen=$(kubectl get monitoringclass/pmm-e2e -o jsonpath='{.metadata.generation}')
               kubectl patch monitoringclass/pmm-e2e --subresource status --type merge \
-                -p '{"status":{"conditions":[{"type":"Accepted","status":"True","reason":"Accepted","message":"claimed by the test","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}'
+                -p '{"status":{"conditions":[{"type":"Accepted","status":"True","reason":"Accepted","message":"claimed by the test","observedGeneration":'"$gen"',"lastTransitionTime":"2026-01-01T00:00:00Z"}]}}'
         - assert:
             file: 20-assert.yaml
 

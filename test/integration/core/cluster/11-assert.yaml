@@ -13,7 +13,9 @@ spec:
       type: pgbouncer
       replicas: 1
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'] | [0].status): "True"
+  (conditions[?type == 'Available'] | [0].status): "True"
   # The PG operator is scaled to 0, so the components have no pods.
   components:
     - name: engine

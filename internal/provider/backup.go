@@ -725,7 +725,7 @@ func immutableBackupSpecChangeMessage(opBackup *pgv2.PerconaPGBackup, backup *ba
 const defaultBackupType = "full"
 
 // enqueueRestoreInstance maps a Restore event to a reconcile request for the
-// Instance it targets, so the Instance phase tracks the restore's lifecycle.
+// Instance it targets, so the Instance status tracks the restore's lifecycle.
 func enqueueRestoreInstance() func(ctx context.Context, obj client.Object) []reconcile.Request {
 	return func(_ context.Context, obj client.Object) []reconcile.Request {
 		r, ok := obj.(*backupv1alpha1.Restore)

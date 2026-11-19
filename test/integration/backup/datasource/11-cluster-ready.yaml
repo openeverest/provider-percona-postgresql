@@ -10,3 +10,25 @@ stringData:
   password: test-password
   pgbouncer-uri: postgresql://test-user:test-password@src-pg-cluster-pgbouncer.default.svc.cluster.local/postgres?sslmode=require
   pgbouncer-host: src-pg-cluster-pgbouncer.default.svc.cluster.local
+---
+# Patroni points the leader Service at the primary, and Kubernetes mirrors
+# that endpoint into an EndpointSlice. The operator is scaled to 0, so stand
+# in for both: the provider reads the slice to tell that a primary serves
+# connections.
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: src-pg-cluster-ha
+  labels:
+    kubernetes.io/service-name: src-pg-cluster-ha
+    postgres-operator.crunchydata.com/cluster: src-pg-cluster
+addressType: IPv4
+endpoints:
+  - addresses:
+      - 10.0.0.10
+    conditions:
+      ready: true
+ports:
+  - name: postgres
+    port: 5432
+    protocol: TCP
