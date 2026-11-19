@@ -14,9 +14,10 @@ import (
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
 	upstreamv1beta1 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/upstream.pgv2.percona.com/v1beta1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -54,6 +55,10 @@ func New() *Provider {
 		ProviderName: common.ProviderName,
 		SchemeFuncs: []func(*runtime.Scheme) error{
 			pgv2.AddToScheme,
+			// StatefulSets and Deployments are read to tell whether the
+			// cluster has rolled out, EndpointSlices whether it has a primary.
+			appsv1.AddToScheme,
+			discoveryv1.AddToScheme,
 		},
 		WatchConfigs: []controller.WatchConfig{
 			controller.WatchOwned(&pgv2.PerconaPGCluster{}),
@@ -64,12 +69,28 @@ func New() *Provider {
 			controller.WatchExternal(&pgv2.PerconaPGBackup{},
 				handler.EnqueueRequestsFromMapFunc(enqueueOperatorBackupInstance()),
 			),
-			// Watch Restores so the Instance leaves the Restoring phase as soon
+			// Watch Restores so the Instance stops reporting a restore as soon
 			// as one reaches a terminal state. Restores are not owned by the
 			// Instance, so map them via spec.instanceRef; without this the
-			// Instance would sit in Restoring until an unrelated event arrived.
+			// Instance would keep reporting it until an unrelated event
+			// arrived.
 			controller.WatchExternal(&backupv1alpha1.Restore{},
 				handler.EnqueueRequestsFromMapFunc(enqueueRestoreInstance()),
+			),
+			// Watch the cluster's StatefulSets and PGBouncer Deployment: the
+			// Instance has converged only once they have rolled out, which the
+			// operator's own status can report too early. Watch the
+			// EndpointSlices of the Patroni leader Service: Patroni moves them
+			// to a new primary without the operator's status changing. None of
+			// them is owned by the Instance, so map them by cluster.
+			controller.WatchExternal(&appsv1.StatefulSet{},
+				handler.EnqueueRequestsFromMapFunc(enqueueClusterInstance()),
+			),
+			controller.WatchExternal(&appsv1.Deployment{},
+				handler.EnqueueRequestsFromMapFunc(enqueueClusterInstance()),
+			),
+			controller.WatchExternal(&discoveryv1.EndpointSlice{},
+				handler.EnqueueRequestsFromMapFunc(enqueueClusterInstance()),
 			),
 		},
 	}
@@ -257,9 +278,9 @@ func (p *Provider) Sync(c *controller.Context) error {
 	// configuration is incomplete (e.g. enabled=true but no storages). We
 	// capture this error and defer returning it until after the cluster has
 	// been applied so that the reconciler can still call Status() and update
-	// the Instance phase. The reconciler treats BackupConfigError specially
-	// by setting the BackupConfigured condition to False without marking the
-	// Instance as Failed.
+	// the Instance status. The reconciler treats BackupConfigError specially
+	// by setting the BackupConfigured condition to False rather than failing
+	// the pass.
 	var backupConfigErr error
 	if err := applyBackupSettings(c, cluster); err != nil {
 		if controller.AsBackupConfigError(err) == nil {
@@ -317,147 +338,13 @@ func (p *Provider) Sync(c *controller.Context) error {
 	return backupConfigErr
 }
 
-// Status computes the current status of the database instance.
-//
-// Query the operator's resource(s) and translate their status
-// into the provider-runtime's Status type.
+// Status reports what the provider observes about the cluster.
 func (p *Provider) Status(c *controller.Context) (controller.Status, error) {
-	l := log.FromContext(c.Context())
-	l.Info("Computing status", "name", c.Name())
-
-	cluster := &pgv2.PerconaPGCluster{}
-	if err := c.Get(cluster, c.Name()); err != nil {
-		if apierrors.IsNotFound(err) {
-			return controller.Provisioning("waiting for PerconaPGCluster to be created"), nil
-		}
-		return controller.Status{}, fmt.Errorf("get PerconaPGCluster %q: %w", c.Name(), err)
-	}
-
-	restoring, err := isRestoreRunning(c)
-	if err != nil {
-		return controller.Status{}, err
-	}
-	if restoring {
-		return controller.Restoring("restore is in progress"), nil
-	}
-
-	resizing, err := isPVCResizing(cluster)
-	if err != nil {
-		return controller.Status{}, err
-	}
-	if resizing {
-		return controller.Updating("resizing persistent volumes"), nil
-	}
-
-	switch cluster.Status.State {
-	case pgv2.AppStateInit:
-		return controller.Initializing("database is initializing"), nil
-	case pgv2.AppStateStopping:
-		return controller.Suspending("database is stopping"), nil
-	case pgv2.AppStatePaused:
-		if cluster.Status.Postgres.Size == 0 && cluster.Status.PGBouncer.Size == 0 {
-			return controller.Suspended(), nil
-		}
-		return controller.Suspending("database is paused"), nil
-	}
-
-	if cluster.Status.ObservedGeneration < cluster.Generation {
-		return controller.Updating("applying latest configuration"), nil
-	}
-
-	if cluster.Status.Postgres.Size == 0 {
-		return controller.Provisioning("waiting for postgres replicas to be created"), nil
-	}
-	if cluster.Status.Postgres.Ready < cluster.Status.Postgres.Size {
-		return controller.Provisioning(
-			fmt.Sprintf("waiting for postgres replicas (%d/%d ready)", cluster.Status.Postgres.Ready, cluster.Status.Postgres.Size),
-		), nil
-	}
-	if cluster.Status.PGBouncer.Size > 0 && cluster.Status.PGBouncer.Ready < cluster.Status.PGBouncer.Size {
-		return controller.Provisioning(
-			fmt.Sprintf("waiting for pgbouncer replicas (%d/%d ready)", cluster.Status.PGBouncer.Ready, cluster.Status.PGBouncer.Size),
-		), nil
-	}
-
-	port := int32(5432)
-	if cluster.Spec.Port != nil {
-		port = *cluster.Spec.Port
-	}
-
-	// Read the user secret created by the PG operator to obtain credentials.
-	// The secret follows the naming convention: <cluster-name>-pguser-<username>.
-	// The PG operator populates this secret with all connection details including
-	// properly URL-encoded URIs for both direct and PGBouncer connections.
-	// The PGBouncer keys are present even when PGBouncer has no replicas, so
-	// they are only used when PGBouncer is enabled.
-	pgBouncerOn := pgBouncerEnabled(cluster)
-	ca, sslMode, err := tlsConnection(c, cluster)
-	if err != nil {
-		return controller.Status{}, err
-	}
-	var username, password, uri string
-	userSecret := &corev1.Secret{}
-	secretName := c.Name() + "-pguser-" + defaultUsername
-	if err := c.Get(userSecret, secretName); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return controller.Status{}, fmt.Errorf("get user secret %q: %w", secretName, err)
-		}
-		l.Info("User secret not found, connection details will not include credentials", "secret", secretName)
-	} else {
-		username = string(userSecret.Data["user"])
-		password = string(userSecret.Data["password"])
-		// Prefer pgbouncer-uri when PGBouncer is enabled, fall back to direct uri.
-		if v := userSecret.Data["pgbouncer-uri"]; pgBouncerOn && len(v) > 0 {
-			uri = string(v)
-		} else if v := userSecret.Data["uri"]; len(v) > 0 {
-			uri = string(v)
-		}
-		// Ensure the URI's sslmode matches the instance's TLS mode and how
-		// clients reach it. PGBouncer always requires TLS from clients
-		// regardless of mode, and rejects plain-text connections.
-		uri = ensureSSLMode(uri, sslMode)
-	}
-
-	// Use the pgbouncer-host from the secret when PGBouncer is running (it
-	// includes the correct service FQDN for PGBouncer), otherwise the direct
-	// host from the secret. Fall back to cluster status, which is the PGBouncer
-	// host, only when the secret has neither.
-	host := cluster.Status.Host
-	if v := userSecret.Data["pgbouncer-host"]; pgBouncerOn && len(v) > 0 {
-		host = string(v)
-	} else if v := userSecret.Data["host"]; len(v) > 0 {
-		host = string(v)
-	}
-
-	// The secret only ever carries the in-cluster Service name. When PGBouncer
-	// is a LoadBalancer the operator publishes the external address in
-	// status.host, which stays empty until the load balancer is provisioned.
-	if pgBouncerOn && pgBouncerLoadBalancerExposed(cluster) {
-		if cluster.Status.Host == "" {
-			return controller.Provisioning("waiting for the pgbouncer load balancer address"), nil
-		}
-		host = cluster.Status.Host
-		uri = replaceURIHost(uri, host)
-	}
-
-	details := controller.ConnectionDetails{
-		Type:     "postgresql",
-		Provider: common.ProviderName,
-		Host:     host,
-		Port:     strconv.Itoa(int(port)),
-		Username: username,
-		Password: password,
-		URI:      uri,
-	}
-	if len(ca) > 0 {
-		// Clients verify the instance's certificate against this CA
-		// (sslrootcert); the operator's own CA is not publicly trusted.
-		details.AdditionalProperties = map[string]string{caKey: string(ca)}
-	}
-
-	return controller.ReadyWithConnectionDetails(details), nil
+	return observeStatus(c)
 }
 
+// isRestoreRunning reports whether a Restore of the Instance has not ended,
+// including the one that seeds a new Instance from its data source.
 func isRestoreRunning(c *controller.Context) (bool, error) {
 	restores, err := c.RestoresForInstance()
 	if err != nil {
@@ -465,18 +352,7 @@ func isRestoreRunning(c *controller.Context) (bool, error) {
 	}
 
 	for i := range restores {
-		state := restores[i].Status.State
-		if state == "" || state == backupv1alpha1.RestoreStatePending || state == backupv1alpha1.RestoreStateRunning {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
-func isPVCResizing(cluster *pgv2.PerconaPGCluster) (bool, error) {
-	for _, condition := range cluster.Status.Conditions {
-		if condition.Type == upstreamv1beta1.PersistentVolumeResizing && condition.Status == metav1.ConditionTrue {
+		if restoreRunning(restores[i].Status.State) {
 			return true, nil
 		}
 	}

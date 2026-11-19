@@ -35,8 +35,16 @@ package provider
 // =============================================================================
 // Allow managing connection Secrets in tenant namespaces.
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
-// Allow the runtime to report on the component pods in the Instance status.
+// Allow the runtime to report on the component pods in the Instance status,
+// and Status to read the image the PostgreSQL pods run during a rollout.
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// Allow Status to tell whether the operator's StatefulSets and the PGBouncer
+// Deployment have rolled out.
+// +kubebuilder:rbac:groups=apps,resources=statefulsets;deployments,verbs=list;watch
+// Allow Status to tell whether the Patroni leader Service routes to a primary.
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=list;watch
+// Allow Status to check a volume resize the operator reports.
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=list
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/status,verbs=get
 // +kubebuilder:rbac:groups=pgv2.percona.com,resources=perconapgclusters/finalizers,verbs=update

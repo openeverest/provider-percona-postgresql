@@ -3,6 +3,12 @@
 - apiGroups:
     - ""
   resources:
+    - persistentvolumeclaims
+  verbs:
+    - list
+- apiGroups:
+    - ""
+  resources:
     - pods
   verbs:
     - get
@@ -28,6 +34,14 @@
   verbs:
     - create
     - patch
+- apiGroups:
+    - apps
+  resources:
+    - deployments
+    - statefulsets
+  verbs:
+    - list
+    - watch
 - apiGroups:
     - backup.openeverest.io
   resources:
@@ -115,6 +129,13 @@
     - providers
   verbs:
     - get
+    - list
+    - watch
+- apiGroups:
+    - discovery.k8s.io
+  resources:
+    - endpointslices
+  verbs:
     - list
     - watch
 - apiGroups:
