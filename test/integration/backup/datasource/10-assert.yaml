@@ -52,10 +52,12 @@ spec:
           s3:
             bucket: test-backup-bucket
             region: us-east-1
-            endpoint: http://fake
+            endpoint: fake
           schedules:
             full: "0 2 * * *"
       global:
+        (starts_with("repo1-path", join('/', ['', 'backups', $namespace, 'src-pg-cluster', '']))): true
+        (ends_with("repo1-path", '/test-storage-s3')): true
         repo1-s3-uri-style: path
         repo1-storage-verify-tls: "n"
 ---

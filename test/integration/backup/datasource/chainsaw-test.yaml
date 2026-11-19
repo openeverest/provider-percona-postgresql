@@ -50,9 +50,10 @@ spec:
         - assert:
             file: 10-assert.yaml
 
-    # Create the users secret, mark the pgBackRest stanza created, then
-    # simulate the source cluster becoming ready. SyncBackup will not create
-    # a PerconaPGBackup until stanzaCreated is true.
+    # Create the users secret and the endpoint Patroni would point at the
+    # primary, mark the pgBackRest stanza created, then simulate the source
+    # cluster becoming ready. SyncBackup will not create a PerconaPGBackup
+    # until stanzaCreated is true.
     - name: source-cluster-ready
       try:
         - apply:
@@ -61,7 +62,7 @@ spec:
             content: |
               GEN=$(kubectl get perconapgclusters.pgv2.percona.com/src-pg-cluster -n "$NAMESPACE" -o jsonpath='{.metadata.generation}')
               kubectl patch perconapgclusters.pgv2.percona.com/src-pg-cluster --subresource status -n "$NAMESPACE" --type=merge \
-                -p "{\"status\":{\"observedGeneration\":${GEN},\"host\":\"src-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":3,\"ready\":3},\"pgbouncer\":{\"size\":1,\"ready\":1},\"pgbackrest\":{\"repos\":[{\"name\":\"repo1\",\"stanzaCreated\":true}]}}}"
+                -p "{\"status\":{\"state\":\"ready\",\"observedGeneration\":${GEN},\"host\":\"src-pg-cluster-pgbouncer.default.svc.cluster.local\",\"postgres\":{\"size\":3,\"ready\":3},\"pgbouncer\":{\"size\":1,\"ready\":1},\"pgbackrest\":{\"repos\":[{\"name\":\"repo1\",\"stanzaCreated\":true}]}}}"
         - assert:
             file: 11-assert.yaml
 

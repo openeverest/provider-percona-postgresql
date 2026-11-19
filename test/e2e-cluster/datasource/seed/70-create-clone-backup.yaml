@@ -13,7 +13,7 @@ spec:
   backup:
     enabled: true
     classRef:
-      name: percona-backup-postgresql
+      name: pg
     storages:
       # Must match the storage used by the source Backup so the provider
       # can read the data; a schedule keeps the provider from pruning it

@@ -3,10 +3,9 @@ kind: Instance
 metadata:
   name: test-pg-tls
 status:
-  # Rejecting a change to an already-Ready Instance does not move its phase
-  # (provider-runtime's block() only sets phase on a brand-new Instance,
-  # i.e. when it is still empty); the Ready condition is what flips.
-  phase: Ready
+  # The phase only moves forward: an Instance that has been available stays
+  # Provisioned when a change is rejected. The Ready condition is what flips.
+  phase: Provisioned
   (conditions[?type == 'Ready'] | [0].status): "False"
   (conditions[?type == 'Ready'] | [0].reason): InvalidReference
 ---

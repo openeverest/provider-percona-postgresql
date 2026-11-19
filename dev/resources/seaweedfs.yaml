@@ -1,5 +1,5 @@
 # In-cluster S3 for Tilt (ENABLE_SEAWEEDFS=true) and the e2e backup tests, served at
-# https://seaweedfs.seaweedfs.svc.cluster.local with a self-signed test cert (verifyTLS: false).
+# https://seaweedfs.seaweedfs.svc.cluster.local with a self-signed test cert (tls.insecureSkipVerify: true).
 apiVersion: v1
 kind: Namespace
 metadata:

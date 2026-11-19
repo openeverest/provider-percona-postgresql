@@ -3,9 +3,8 @@ kind: Instance
 metadata:
   name: test-pg-tls-badsecret
 status:
-  # A brand-new Instance that fails validation is left Pending
-  # (provider-runtime's block() only sets a phase when it is still empty);
-  # the Ready condition carries the actual reason.
+  # A brand-new Instance that fails validation has never been available, so
+  # it is Pending; the Ready condition carries the actual reason.
   phase: Pending
   (conditions[?type == 'Ready'] | [0].status): "False"
   (conditions[?type == 'Ready'] | [0].reason): InvalidReference
