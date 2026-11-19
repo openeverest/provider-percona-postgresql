@@ -21,3 +21,16 @@ spec:
   options:
     - --set=20260902-src-backup-set
     - --type=immediate
+---
+# The restore replaces the data: the Instance is not Ready and clients cannot
+# connect until the Restore ends.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: src-pg-cluster
+status:
+  phase: Provisioned
+  (conditions[?type == 'Restoring'] | [0].status): "True"
+  (conditions[?type == 'Ready'] | [0].status): "False"
+  (conditions[?type == 'Ready'] | [0].reason): Restoring
+  (conditions[?type == 'Available'] | [0].status): "False"

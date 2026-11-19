@@ -26,7 +26,9 @@ spec:
           sourceRanges:
             - "172.16.0.0/12"
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'] | [0].status): "True"
+  (conditions[?type == 'Available'] | [0].status): "True"
 ---
 apiVersion: pgv2.percona.com/v2
 kind: PerconaPGCluster

@@ -3,7 +3,9 @@ kind: Instance
 metadata:
   name: pg-clone-backup
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'] | [0].status): "True"
+  (conditions[?type == 'Available'] | [0].status): "True"
   (conditions[?type == 'DataSourceReady'] | [0].status): "True"
 ---
 apiVersion: backup.openeverest.io/v1alpha1
