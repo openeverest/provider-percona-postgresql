@@ -24,6 +24,7 @@ func TestResolvePointInTimeSource(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, backupv1alpha1.AddToScheme(scheme))
 	require.NoError(t, pgv2.AddToScheme(scheme))
 
 	instance := &corev1alpha1.Instance{
@@ -71,10 +72,16 @@ func TestResolvePointInTimeSource(t *testing.T) {
 			},
 		}
 	}
-	newCtx := func() *controller.Context {
+	newCtx := func(restores ...client.Object) *controller.Context {
 		inst := instance.DeepCopy()
 		pg := pgCluster.DeepCopy()
-		k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(inst, pg).Build()
+		k8sClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(append(restores, inst, pg)...).
+			WithIndex(&backupv1alpha1.Restore{}, controller.IndexRestoreInstanceName, func(obj client.Object) []string {
+				return []string{obj.(*backupv1alpha1.Restore).Spec.InstanceRef.Name}
+			}).
+			Build()
 		return controller.NewContext(context.Background(), k8sClient, inst, "provider-percona-postgresql")
 	}
 
@@ -141,6 +148,118 @@ func TestResolvePointInTimeSource(t *testing.T) {
 		require.NotNil(t, pending)
 		assert.Equal(t, backupv1alpha1.RestoreStatePending, pending.State)
 	})
+
+	// An in-place restore that started after the target leaves a newer
+	// timeline without the target's commits (#104).
+	target := time.Date(2026, 11, 14, 7, 48, 2, 0, time.UTC)
+	at := func(hour, minute int) *metav1.Time {
+		ts := metav1.NewTime(time.Date(2026, 11, 14, hour, minute, 0, 0, time.UTC))
+		return &ts
+	}
+	mkInPlace := func(name string, created, started *metav1.Time, state backupv1alpha1.RestoreState) *backupv1alpha1.Restore {
+		return &backupv1alpha1.Restore{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "everest", CreationTimestamp: *created},
+			Spec: backupv1alpha1.RestoreSpec{
+				InstanceRef: apicommon.ObjectRef{Name: "pg-prod"},
+				DataSource:  backupv1alpha1.DataSource{Type: backupv1alpha1.DataSourceTypeBackup},
+			},
+			Status: backupv1alpha1.RestoreStatus{StartedAt: started, State: state},
+		}
+	}
+	mkPITR := func(recoveryTarget backupv1alpha1.RecoveryTarget) *backupv1alpha1.Restore {
+		date := metav1.NewTime(target)
+		r := mkRestore(&backupv1alpha1.DataSourcePointInTime{
+			Source:         backupv1alpha1.StreamSource{StorageRef: apicommon.ObjectRef{Name: "minio-primary"}},
+			RecoveryTarget: recoveryTarget,
+			Date:           &date,
+		})
+		r.CreationTimestamp = *at(8, 0)
+		return r
+	}
+
+	tests := []struct {
+		name           string
+		recoveryTarget backupv1alpha1.RecoveryTarget
+		earlier        *backupv1alpha1.Restore
+		wantState      backupv1alpha1.RestoreState // "" means no status: options are built
+		wantInMessage  string
+	}{
+		{
+			name:           "no other restore",
+			recoveryTarget: backupv1alpha1.RecoveryTargetDate,
+		},
+		{
+			name:           "earlier restore started before the target",
+			recoveryTarget: backupv1alpha1.RecoveryTargetDate,
+			earlier:        mkInPlace("before", at(7, 30), at(7, 31), backupv1alpha1.RestoreStateSucceeded),
+		},
+		{
+			name:           "earlier restore started after the target",
+			recoveryTarget: backupv1alpha1.RecoveryTargetDate,
+			earlier:        mkInPlace("after", at(7, 50), at(7, 51), backupv1alpha1.RestoreStateSucceeded),
+			wantState:      backupv1alpha1.RestoreStateFailed,
+			wantInMessage:  `Restore "after" started at 2026-11-14T07:51:00Z`,
+		},
+		{
+			name:           "earlier failed restore that started after the target",
+			recoveryTarget: backupv1alpha1.RecoveryTargetDate,
+			earlier:        mkInPlace("failed-after", at(7, 50), at(7, 51), backupv1alpha1.RestoreStateFailed),
+			wantState:      backupv1alpha1.RestoreStateFailed,
+			wantInMessage:  `Restore "failed-after"`,
+		},
+		{
+			name:           "earlier restore not started yet",
+			recoveryTarget: backupv1alpha1.RecoveryTargetDate,
+			earlier:        mkInPlace("queued", at(7, 55), nil, backupv1alpha1.RestoreStatePending),
+			wantState:      backupv1alpha1.RestoreStatePending,
+			wantInMessage:  `Waiting for Restore "queued"`,
+		},
+		{
+			name:           "earlier restore failed without starting",
+			recoveryTarget: backupv1alpha1.RecoveryTargetDate,
+			earlier:        mkInPlace("rejected", at(7, 55), nil, backupv1alpha1.RestoreStateFailed),
+		},
+		{
+			name:           "restore created after this one is ignored",
+			recoveryTarget: backupv1alpha1.RecoveryTargetDate,
+			earlier:        mkInPlace("later", at(8, 5), at(8, 6), backupv1alpha1.RestoreStateSucceeded),
+		},
+		{
+			name:           "latest target is not checked",
+			recoveryTarget: backupv1alpha1.RecoveryTargetLatest,
+			earlier:        mkInPlace("after", at(7, 50), at(7, 51), backupv1alpha1.RestoreStateSucceeded),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			restore := mkPITR(tt.recoveryTarget)
+			// The Restore being synced is always listed too; it must not block itself.
+			objs := []client.Object{restore.DeepCopy()}
+			if tt.earlier != nil {
+				objs = append(objs, tt.earlier)
+			}
+
+			repo, options, status, err := resolvePointInTimeSource(newCtx(objs...), restore, nil)
+
+			require.NoError(t, err)
+			if tt.wantState == "" {
+				require.Nil(t, status)
+				require.NotNil(t, repo)
+				assert.Equal(t, "repo1", *repo)
+				if tt.recoveryTarget == backupv1alpha1.RecoveryTargetDate {
+					assert.Equal(t, []string{"--type=time", `--target="2026-11-14 07:48:02+00:00"`}, options)
+				}
+				return
+			}
+			require.NotNil(t, status)
+			assert.Equal(t, tt.wantState, status.State)
+			assert.Contains(t, status.Message, tt.wantInMessage)
+			assert.Nil(t, repo)
+			assert.Empty(t, options)
+		})
+	}
 }
 
 func TestResolveBackupSource(t *testing.T) {

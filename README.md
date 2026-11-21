@@ -427,6 +427,7 @@ kubectl logs -n everest-system deploy/provider-percona-postgresql -f
 | No `Provider` resource in the cluster | Is the chart installed? Check the provider deployment logs |
 | `Instance` ignored entirely | `spec.providerRef.name` must be `provider-percona-postgresql` |
 | `PerconaPGCluster` created but no pods | Inspect the `PerconaPGCluster` status — the failure is upstream in the operator |
+| Point-in-time `Restore` `Failed` with "Restore ... started at ..., after the target" | An earlier in-place `Restore` of the `Instance` started after the target time and created a newer timeline. A recovery to the target would follow that timeline and miss the data at the target, so the provider refuses it. The check only sees `Restore` objects that still exist: if the earlier `Restore` was deleted, the recovery is not refused and can return the wrong data ([#104](https://github.com/openeverest/provider-percona-postgresql/issues/104)) |
 
 ## Contributing
 

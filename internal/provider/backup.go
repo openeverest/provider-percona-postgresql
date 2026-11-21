@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
@@ -561,6 +562,35 @@ func resolvePointInTimeSource(
 		}, nil
 	}
 
+	// An in-place restore that started after the target created a newer
+	// timeline that branches off before the target. Recovery follows the
+	// newest timeline by default, so it would miss the commits made before
+	// the target and still report success. Refuse instead.
+	if pitr.RecoveryTarget == backupv1alpha1.RecoveryTargetDate && !isSeedingRestore(c, restore) {
+		blocker, err := blockingInPlaceRestore(c, restore, pitr.Date.Time)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if blocker != nil {
+			target := pitr.Date.UTC().Format(time.RFC3339)
+			if blocker.Status.StartedAt == nil {
+				return nil, nil, &controller.RestoreExecutionStatus{
+					State: backupv1alpha1.RestoreStatePending,
+					Message: fmt.Sprintf("Waiting for Restore %q to start or fail before a point-in-time recovery to %s",
+						blocker.Name, target),
+					OperatorRestoreRef: opRef,
+				}, nil
+			}
+			return nil, nil, &controller.RestoreExecutionStatus{
+				State: backupv1alpha1.RestoreStateFailed,
+				Message: fmt.Sprintf("Restore %q started at %s, after the target %s. "+
+					"A point-in-time recovery would follow its newer timeline and miss the data at the target",
+					blocker.Name, blocker.Status.StartedAt.UTC().Format(time.RFC3339), target),
+				OperatorRestoreRef: opRef,
+			}, nil
+		}
+	}
+
 	// No --set: pgBackRest selects the base backup for the target itself.
 	// For "latest" no options are needed either -- the default recovery type
 	// replays the WAL stream to its end.
@@ -574,6 +604,70 @@ func resolvePointInTimeSource(
 	}
 
 	return &repoName, options, nil, nil
+}
+
+// blockingInPlaceRestore returns an earlier in-place Restore of the same
+// Instance that makes a point-in-time recovery to target unsafe, or nil.
+//
+// Only Restores created before this one count. SyncRestore runs on every
+// reconcile, so a Restore created later must not turn a finished recovery
+// into a failed one, and two waiting recoveries must not block each other.
+//
+// The check can only see Restore objects that still exist. A deleted Restore
+// leaves its timeline behind but cannot be detected here.
+//
+// Rules, in order, for each other Restore X of the Instance:
+//   - X is this Restore: skip.
+//   - X was not created before this Restore: skip.
+//   - X is the seed Restore (isSeedingRestore): skip.
+//   - X has no startedAt and has not ended (restoreRunning): return X.
+//   - X has no startedAt and has ended: skip, it never touched the data.
+//   - X started after target: return X.
+func blockingInPlaceRestore(
+	c *controller.Context,
+	restore *backupv1alpha1.Restore,
+	target time.Time,
+) (*backupv1alpha1.Restore, error) {
+	restores, err := c.RestoresForInstance()
+	if err != nil {
+		return nil, fmt.Errorf("list restores for instance %q: %w", c.Name(), err)
+	}
+
+	for i := range restores {
+		x := &restores[i]
+
+		// Rule 1: X is this Restore -> skip.
+		if x.Name == restore.Name {
+			continue
+		}
+
+		// Rule 2: X was not created before this Restore -> skip.
+		if !x.CreationTimestamp.Before(&restore.CreationTimestamp) {
+			continue
+		}
+
+		// Rule 3: X is the seed Restore -> skip.
+		if isSeedingRestore(c, x) {
+			continue
+		}
+
+		// Rule 4: no startedAt and not ended -> X blocks.
+		if x.Status.StartedAt == nil && restoreRunning(x.Status.State) {
+			return x, nil
+		}
+
+		// Rule 5: no startedAt (so it ended) -> skip.
+		if x.Status.StartedAt == nil {
+			continue
+		}
+
+		// Rule 6: started after target -> X blocks.
+		if x.Status.StartedAt.After(target) {
+			return x, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // CleanupBackup deletes the operator backup resource.
