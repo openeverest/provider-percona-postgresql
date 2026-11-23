@@ -105,6 +105,10 @@ helm install provider-percona-postgresql \
   writes are admitted and the `Instance` reports the errors in its `Ready` condition. A
   missing object the `Instance` names, such as its user Secret, is never a reason to reject
   it: `kubectl` prints a warning, and the `Instance` reports it once created.
+- The chart is stamped with the OpenEverest it is built for, and the install fails, before
+  anything is applied, when the OpenEverest in the cluster does not support it; the error
+  names the OpenEverest the chart needs. To install anyway on one OpenEverest release, set
+  `compatibility.acknowledge.coreVersion` to the version the error names.
 
 To install from a checkout instead, `make helm-install` builds the chart dependencies
 and installs it against your current kube context.
@@ -431,7 +435,8 @@ make dev-down
 ```
 
 `make help` lists every target. `make verify` fails when generated files are stale — run
-`make generate` and commit the result.
+`make generate` and commit the result — or when the chart is not stamped with the
+OpenEverest the provider is built against (`go tool provider-sdk verify`).
 
 The provider contract (`Validate` / `Sync` / `Status` / `Cleanup`), RBAC markers, watches,
 code generation, and the backup/restore interfaces are documented once for all providers in
