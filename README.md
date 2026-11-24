@@ -107,8 +107,11 @@ helm install provider-percona-postgresql \
   it: `kubectl` prints a warning, and the `Instance` reports it once created.
 - The chart is stamped with the OpenEverest it is built for, and the install fails, before
   anything is applied, when the OpenEverest in the cluster does not support it; the error
-  names the OpenEverest the chart needs. To install anyway on one OpenEverest release, set
-  `compatibility.acknowledge.coreVersion` to the version the error names.
+  names the OpenEverest the chart needs. To install anyway, set
+  `compatibility.acknowledge.coreVersion` to the version the error names. It holds on that
+  release and the later ones that keep its contract, such as its patch releases, and expires
+  with the first OpenEverest release that changes the contract; set ahead of an upgrade, it
+  does nothing until that release is installed.
 
 To install from a checkout instead, `make helm-install` builds the chart dependencies
 and installs it against your current kube context.
