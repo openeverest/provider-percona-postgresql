@@ -19,4 +19,4 @@ dependencies:
     repository: https://percona.github.io/percona-helm-charts/
     condition: pg-operator.enabled
 annotations:
-  openeverest.io/contract-version: "2.0.0-alpha.1.dev"
+  openeverest.io/contract-version: "2.0.0-alpha.1.next"
