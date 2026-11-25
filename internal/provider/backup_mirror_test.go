@@ -285,7 +285,7 @@ func TestMirrorScheduledBackupIncremental(t *testing.T) {
 	require.Equal(t, "bucket-2", mirror.Spec.StorageRef.Name, "storage name should be resolved from slot map for repo2")
 }
 
-func TestDeriveScheduleName(t *testing.T) {
+func TestDeriveBackupType(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -341,10 +341,73 @@ func TestDeriveScheduleName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := deriveScheduleName(tt.backupName, tt.clusterName, tt.repoName)
+			got := deriveBackupType(tt.backupName, tt.clusterName, tt.repoName)
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// TestMirrorScheduledBackupUsesConfiguredScheduleName verifies that the
+// Backup's scheduleName is the user-facing InstanceBackupSchedule.Name (e.g.
+// "backup-iku"), resolved by matching the operator backup's type against the
+// Instance's configured schedules -- not the type itself.
+func TestMirrorScheduledBackupUsesConfiguredScheduleName(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, pgv2.AddToScheme(scheme))
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "inst-0hc", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
+			Backup: &corev1alpha1.InstanceBackupSpec{
+				ClassRef: apicommon.ObjectRef{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{{
+					StorageRef: apicommon.ObjectRef{Name: "my-storage"},
+					Schedules: []corev1alpha1.InstanceBackupSchedule{
+						{Name: "backup-iku", Enabled: true, Cron: "0 2 * * *"}, // no Parameters -> type defaults to full
+					},
+				}},
+			},
+		},
+	}
+
+	pgCluster := &pgv2.PerconaPGCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "inst-0hc",
+			Namespace: "default",
+			Annotations: map[string]string{
+				repoSlotMapAnnotation: `{"my-storage":0}`,
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance, pgCluster).Build()
+
+	repoName := "repo1"
+	opBackup := &pgv2.PerconaPGBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:         "inst-0hc-repo1-full-p9dz9",
+			GenerateName: "inst-0hc-repo1-full-",
+			Namespace:    "default",
+			UID:          "11111111-1111-1111-1111-111111111111",
+			Annotations: map[string]string{
+				annotationPGBackrestBackupJobType: "manual",
+			},
+		},
+		Spec: pgv2.PerconaPGBackupSpec{
+			PGCluster: "inst-0hc",
+			RepoName:  &repoName,
+		},
+	}
+
+	mirror, err := (&Provider{}).Mirror(context.Background(), k8sClient, opBackup)
+	require.NoError(t, err)
+	require.NotNil(t, mirror)
+	assert.Equal(t, "backup-iku", mirror.Spec.ScheduleName,
+		"scheduleName must be the schedule's user-facing Name, not its inferred type")
 }
 
 func TestApplyRetentionConfig(t *testing.T) {
@@ -379,7 +442,7 @@ func TestApplyRetentionConfig(t *testing.T) {
 			name:     "differential backup with retention",
 			repoName: "repo2",
 			schedules: []corev1alpha1.InstanceBackupSchedule{
-				{Name: "diff", Enabled: true, Cron: "0 3 * * *", Retention: count(5)},
+				{Name: "weekly-diff", Enabled: true, Cron: "0 3 * * *", Retention: count(5), Parameters: raw(`{"type":"diff"}`)},
 			},
 			wantKeys: map[string]string{
 				"repo2-retention-diff": "5",
@@ -402,17 +465,6 @@ func TestApplyRetentionConfig(t *testing.T) {
 			wantKeys: map[string]string{},
 		},
 		{
-			name:     "default schedule name maps to full retention",
-			repoName: "repo1",
-			schedules: []corev1alpha1.InstanceBackupSchedule{
-				{Name: "nightly", Enabled: true, Cron: "0 2 * * *", Retention: count(1)},
-			},
-			wantKeys: map[string]string{
-				"repo1-retention-full":      "1",
-				"repo1-retention-full-type": "count",
-			},
-		},
-		{
 			name:     "time retention in days",
 			repoName: "repo1",
 			schedules: []corev1alpha1.InstanceBackupSchedule{
@@ -427,7 +479,7 @@ func TestApplyRetentionConfig(t *testing.T) {
 			name:     "time retention in weeks converts to days",
 			repoName: "repo1",
 			schedules: []corev1alpha1.InstanceBackupSchedule{
-				{Name: "incr", Enabled: true, Cron: "0 * * * *", Retention: window("4w")},
+				{Name: "hourly-incr", Enabled: true, Cron: "0 * * * *", Retention: window("4w"), Parameters: raw(`{"type":"incr"}`)},
 			},
 			wantKeys: map[string]string{
 				"repo1-retention-full":      "28",
@@ -438,7 +490,7 @@ func TestApplyRetentionConfig(t *testing.T) {
 			name:     "time retention in months never undershoots a calendar month",
 			repoName: "repo1",
 			schedules: []corev1alpha1.InstanceBackupSchedule{
-				{Name: "nightly", Enabled: true, Cron: "0 2 * * *", Retention: window("2m")},
+				{Name: "full", Enabled: true, Cron: "0 2 * * *", Retention: window("2m")},
 			},
 			wantKeys: map[string]string{
 				"repo1-retention-full":      "62",
@@ -449,9 +501,9 @@ func TestApplyRetentionConfig(t *testing.T) {
 			name:     "time retention on a differential schedule is rejected",
 			repoName: "repo1",
 			schedules: []corev1alpha1.InstanceBackupSchedule{
-				{Name: "diff", Enabled: true, Cron: "0 3 * * *", Retention: window("7d")},
+				{Name: "nightly-diff", Enabled: true, Cron: "0 3 * * *", Retention: window("7d"), Parameters: raw(`{"type":"diff"}`)},
 			},
-			wantErr: `schedule "diff": pgBackRest only supports count retention for differential backups`,
+			wantErr: `schedule "nightly-diff": pgBackRest only supports count retention for differential backups`,
 		},
 	}
 
@@ -1410,6 +1462,118 @@ func TestBuildPGBackRestRepos(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, corev1alpha1.ReasonBackupStorageNotFound, storages[0].Reason)
 	})
+}
+
+// TestBuildPGBackRestSchedules demonstrates how multiple enabled schedules on
+// one storage combine into a single pgBackRest PGBackRestBackupSchedules:
+// each schedule's effective type (Parameters.type, default full) fills its
+// own slot independently, so one storage can run full, differential and
+// incremental backups on three unrelated crons at once. A disabled schedule
+// never fills a slot, even if it would otherwise match one.
+func TestBuildPGBackRestSchedules(t *testing.T) {
+	t.Parallel()
+
+	got, err := buildPGBackRestSchedules([]corev1alpha1.InstanceBackupSchedule{
+		{Name: "nightly", Enabled: true, Cron: "0 1 * * *"}, // no Parameters -> type defaults to full
+		{Name: "weekday-diff", Enabled: true, Cron: "0 1 * * 1", Parameters: raw(`{"type":"diff"}`)},
+		{Name: "weekday-incr", Enabled: true, Cron: "0 1 * * 2", Parameters: raw(`{"type":"incr"}`)},
+		{Name: "disabled-diff", Enabled: false, Cron: "0 2 * * 3", Parameters: raw(`{"type":"diff"}`)},
+	})
+
+	require.NoError(t, err)
+	full, diff, incr := "0 1 * * *", "0 1 * * 1", "0 1 * * 2"
+	assert.Equal(t, &upstreamv1beta1.PGBackRestBackupSchedules{
+		Full:         &full,
+		Differential: &diff,
+		Incremental:  &incr,
+	}, got, "a disabled schedule must not fill its type's slot")
+}
+
+// TestBuildPGBackRestRepos_MultipleRepoScheduleCombinations is an
+// end-to-end illustration of two storages, each combining a different mix of
+// full/differential/incremental schedules into its own pgBackRest repo --
+// matching the shape the PG operator renders on the PerconaPGCluster, e.g.:
+//
+//	repos:
+//	  - name: repo1
+//	    s3: {bucket: bs-msp-1, endpoint: seaweedfs.seaweedfs.svc.cluster.local, region: us-east-1}
+//	    schedules: {full: "0 1 * * *", differential: "0 1 * * 1", incremental: "0 1 * * 2"}
+//	  - name: repo2
+//	    s3: {bucket: bs-msp-2, endpoint: seaweedfs.seaweedfs.svc.cluster.local, region: us-east-1}
+//	    schedules: {full: "0 * * * *", differential: "0 1 1 * *"}
+func TestBuildPGBackRestRepos_MultipleRepoScheduleCombinations(t *testing.T) {
+	t.Parallel()
+
+	storage := func(name, bucket string) []client.Object {
+		return []client.Object{
+			&backupv1alpha1.BackupStorage{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: repoTestNamespace, Generation: 1},
+				Spec: backupv1alpha1.BackupStorageSpec{
+					BackupStorageClassRef: apicommon.ObjectRef{Name: s3.ClassName},
+					Location:              backupv1alpha1.BackupStorageLocation{ObjectStore: &backupv1alpha1.ObjectStoreLocation{Bucket: bucket}},
+					Parameters:            &runtime.RawExtension{Raw: []byte(`{"region":"us-east-1","endpointURL":"https://seaweedfs.seaweedfs.svc.cluster.local"}`)},
+					Authentication: apicommon.Authentication{
+						Mode:                 s3.AuthModeAccessKey,
+						CredentialsSecretRef: &apicommon.SecretRef{Name: name + "-creds"},
+					},
+				},
+				Status: backupv1alpha1.BackupStorageStatus{
+					Conditions: []metav1.Condition{{
+						Type: backupv1alpha1.BackupStorageConditionAccepted, Status: metav1.ConditionTrue,
+						Reason: backupv1alpha1.ReasonAccepted, ObservedGeneration: 1, LastTransitionTime: metav1.Now(),
+					}},
+					BackupClasses: []backupv1alpha1.BackupClassVerdict{{
+						Name:          "pg",
+						Compatibility: backupv1alpha1.CompatibilityCompatible,
+						Observed: backupv1alpha1.BackupClassVerdictInputs{
+							StorageGeneration: 1, ClassUID: repoTestClassUID, ClassGeneration: 1,
+							StorageClassUID: repoTestStorageClassUID, StorageClassGeneration: 1,
+						},
+					}},
+				},
+			},
+			&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: name + "-creds", Namespace: repoTestNamespace},
+				Data: map[string][]byte{
+					s3.KeyAWSAccessKeyID:     []byte("key"),
+					s3.KeyAWSSecretAccessKey: []byte("secret"),
+				},
+			},
+		}
+	}
+
+	in := backupInstance("msp-1", "msp-2")
+	in.Spec.Backup.Storages[0].Schedules = []corev1alpha1.InstanceBackupSchedule{
+		{Name: "nightly", Enabled: true, Cron: "0 1 * * *"}, // default type: full
+		{Name: "weekday-diff", Enabled: true, Cron: "0 1 * * 1", Parameters: raw(`{"type":"diff"}`)},
+		{Name: "weekday-incr", Enabled: true, Cron: "0 1 * * 2", Parameters: raw(`{"type":"incr"}`)},
+	}
+	in.Spec.Backup.Storages[1].Schedules = []corev1alpha1.InstanceBackupSchedule{
+		{Name: "hourly", Enabled: true, Cron: "0 * * * *"}, // default type: full
+		{Name: "monthly-diff", Enabled: true, Cron: "0 1 1 * *", Parameters: raw(`{"type":"diff"}`)},
+	}
+
+	objs := append(storage("msp-1", "bs-msp-1"), storage("msp-2", "bs-msp-2")...)
+	c := newRepoTestContext(t, in, objs...)
+
+	got, err := buildPGBackRestRepos(c, &pgv2.PerconaPGCluster{}, repoSlotMap{"msp-1": 0, "msp-2": 1})
+
+	require.NoError(t, err)
+	require.Len(t, got.repos, 2)
+
+	full1, diff1, incr1 := "0 1 * * *", "0 1 * * 1", "0 1 * * 2"
+	assert.Equal(t, upstreamv1beta1.PGBackRestRepo{
+		Name:            "repo1",
+		S3:              &upstreamv1beta1.RepoS3{Bucket: "bs-msp-1", Endpoint: "seaweedfs.seaweedfs.svc.cluster.local", Region: "us-east-1"},
+		BackupSchedules: &upstreamv1beta1.PGBackRestBackupSchedules{Full: &full1, Differential: &diff1, Incremental: &incr1},
+	}, got.repos[0], "repo1 runs all three backup types on independent crons")
+
+	full2, diff2 := "0 * * * *", "0 1 1 * *"
+	assert.Equal(t, upstreamv1beta1.PGBackRestRepo{
+		Name:            "repo2",
+		S3:              &upstreamv1beta1.RepoS3{Bucket: "bs-msp-2", Endpoint: "seaweedfs.seaweedfs.svc.cluster.local", Region: "us-east-1"},
+		BackupSchedules: &upstreamv1beta1.PGBackRestBackupSchedules{Full: &full2, Differential: &diff2},
+	}, got.repos[1], "repo2 only has full and differential schedules; incremental stays unset")
 }
 
 func TestApplyBackupSettings(t *testing.T) {

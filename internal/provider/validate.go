@@ -103,6 +103,8 @@ func (p *Provider) Validate(in controller.ValidationInput) controller.Validation
 		))
 	}
 
+	errs = append(errs, validateBackupSchedules(instance.Spec.Backup)...)
+
 	tls, err := tlsParameters(instance)
 	if err != nil {
 		errs = append(errs, field.Invalid(
