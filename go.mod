@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/openeverest/monitoring-pmm/api v0.0.0-20261110082751-22ff528eb0dc
-	github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261125163324-baa7302420dd
+	github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261125185706-a1ddf4732eeb
 	github.com/percona/percona-postgresql-operator/v3 v3.1.0
 	github.com/stretchr/testify v1.12.1
 	k8s.io/api v0.37.2
@@ -110,7 +110,7 @@ require (
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/oklog/ulid/v2 v2.1.2 // indirect
-	github.com/openeverest/provider-sdk v0.4.1-0.20261125181151-9bdf7ebde95a // indirect
+	github.com/openeverest/provider-sdk v0.4.1-0.20261125185722-f7ae82ac9111 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.24.0 // indirect
