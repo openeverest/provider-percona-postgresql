@@ -1,0 +1,21 @@
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: pg-tls-issuer
+status:
+  postgres:
+    ready: 1
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pg-tls-issuer
+status:
+  phase: Provisioned
+  (conditions[?type == 'Ready'] | [0].status): "True"
+  (conditions[?type == 'Available'] | [0].status): "True"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-tls-issuer-conn

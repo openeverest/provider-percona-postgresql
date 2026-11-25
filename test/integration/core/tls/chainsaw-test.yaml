@@ -6,12 +6,14 @@ metadata:
 spec:
   description: |
     TLS certificate configuration (spec.parameters.tls): user-supplied
-    certificate and replication secrets are wired onto
+    certificate and internal (replication) secrets are wired onto
     PerconaPGCluster.spec.secrets and spec.proxy.pgBouncer, the CA is
     exposed on the connection secret, the certificate source cannot change
     on an existing instance, and invalid configurations (an incomplete
     secret, or certificate secrets and a root CA secret set together) are
-    rejected before the operator CR is ever created.
+    rejected before the operator CR is ever created. An external
+    cert-manager issuer reaches spec.tls.issuerConf; a namespaced Issuer and
+    additionalNames are rejected by the webhook.
     The Percona operator is scaled to 0 so status is simulated, matching
     other integration suites.
   catch:
@@ -64,7 +66,7 @@ spec:
         - script:
             content: |
               kubectl patch instance/test-pg-tls -n "$NAMESPACE" --type=merge \
-                -p '{"spec":{"parameters":{"tls":{"certificateSecretName":"test-pg-tls-certs-2","replicationCertificateSecretName":"test-pg-tls-repl-2"}}}}'
+                -p '{"spec":{"parameters":{"tls":{"certificateSecretName":"test-pg-tls-certs-2","internalCertificateSecretName":"test-pg-tls-repl-2"}}}}'
               # Rejecting the change leaves status.phase Provisioned (see
               # 20-assert.yaml); the Ready condition is what flips to False.
               kubectl wait instance/test-pg-tls -n "$NAMESPACE" \
@@ -77,7 +79,7 @@ spec:
         - script:
             content: |
               kubectl patch instance/test-pg-tls -n "$NAMESPACE" --type=merge \
-                -p '{"spec":{"parameters":{"tls":{"certificateSecretName":"test-pg-tls-certs","replicationCertificateSecretName":"test-pg-tls-repl"}}}}'
+                -p '{"spec":{"parameters":{"tls":{"certificateSecretName":"test-pg-tls-certs","internalCertificateSecretName":"test-pg-tls-repl"}}}}'
               kubectl wait instance/test-pg-tls -n "$NAMESPACE" \
                 --for=condition=Ready=True --timeout=30s
         - assert:
@@ -119,6 +121,35 @@ spec:
               ($error != null): true
               (contains($stderr, 'spec.parameters.tls.rootCASecretName')): true
               (contains($stderr, 'use either certificate secrets or a root CA secret, not both')): true
+
+    - name: external-issuer-reaches-issuer-conf
+      try:
+        - apply:
+            file: 40-external-issuer.yaml
+        - assert:
+            file: 40-assert.yaml
+        - script:
+            content: |
+              kubectl -n "$NAMESPACE" delete instance/test-pg-tls-issuer --wait=false
+              kubectl -n "$NAMESPACE" patch perconapgclusters.pgv2.percona.com/test-pg-tls-issuer -p '{"metadata":{"finalizers":null}}' --type merge || true
+
+    - name: namespaced-issuer-is-rejected
+      try:
+        - script:
+            content: kubectl apply -n $NAMESPACE -f 41-namespaced-issuer.yaml
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.parameters.tls.issuer.kind')): true
+              (contains($stderr, 'namespaced Issuer is not supported')): true
+
+    - name: additional-names-are-rejected
+      try:
+        - script:
+            content: kubectl apply -n $NAMESPACE -f 42-additional-names.yaml
+            check:
+              ($error != null): true
+              (contains($stderr, 'spec.parameters.tls.additionalNames')): true
+              (contains($stderr, 'percona-postgresql-operator/issues/1811')): true
 
     - name: delete-cluster
       try:

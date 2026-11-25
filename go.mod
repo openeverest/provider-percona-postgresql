@@ -3,6 +3,7 @@ module github.com/openeverest/provider-percona-postgresql
 go 1.27.1
 
 require (
+	github.com/cert-manager/cert-manager v1.21.1
 	github.com/openeverest/monitoring-pmm/api v0.0.0-20261110082751-22ff528eb0dc
 	github.com/openeverest/openeverest/v2 v2.0.0-alpha.1
 	github.com/percona/percona-postgresql-operator/v3 v3.1.0
@@ -33,7 +34,6 @@ require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
-	github.com/cert-manager/cert-manager v1.21.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/bubbles v1.0.0 // indirect
 	github.com/charmbracelet/bubbletea v1.3.10 // indirect

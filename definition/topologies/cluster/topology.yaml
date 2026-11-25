@@ -298,19 +298,54 @@ ui:
                                 celExpressions:
                                     - celExpr: "!has(spec.parameters.tls.certificateSecretName) || spec.parameters.tls.certificateSecretName == '' || !has(spec.parameters.tls.rootCASecretName) || spec.parameters.tls.rootCASecretName == ''"
                                       message: "Use either certificate secrets or a root CA secret, not both"
-                        replicationCertificateSecretName:
+                                    - celExpr: "!has(spec.parameters.tls.certificateSecretName) || spec.parameters.tls.certificateSecretName == '' || !has(spec.parameters.tls.issuer) || !has(spec.parameters.tls.issuer.name) || spec.parameters.tls.issuer.name == ''"
+                                      message: "Use either certificate secrets or an issuer, not both"
+                        internalCertificateSecretName:
                             uiType: text
-                            path: spec.parameters.tls.replicationCertificateSecretName
+                            path: spec.parameters.tls.internalCertificateSecretName
                             fieldParams:
-                                label: "Replication certificate secret"
-                                helperText: "For connections between members; must share the same ca.crt as the certificate secret"
+                                label: "Internal certificate secret"
+                                helperText: "Client certificate members authenticate replication with; must share the same ca.crt as the certificate secret"
                                 modes:
                                     edit:
                                         disabled: true
                             validation:
                                 celExpressions:
-                                    - celExpr: "!has(spec.parameters.tls.replicationCertificateSecretName) || spec.parameters.tls.replicationCertificateSecretName == '' || (has(spec.parameters.tls.certificateSecretName) && spec.parameters.tls.certificateSecretName != '')"
+                                    - celExpr: "!has(spec.parameters.tls.internalCertificateSecretName) || spec.parameters.tls.internalCertificateSecretName == '' || (has(spec.parameters.tls.certificateSecretName) && spec.parameters.tls.certificateSecretName != '')"
                                       message: "Set the certificate secret as well"
+                        issuer:
+                            uiType: group
+                            groupType: line
+                            components:
+                                issuerName:
+                                    uiType: text
+                                    path: spec.parameters.tls.issuer.name
+                                    fieldParams:
+                                        label: "cert-manager issuer"
+                                        helperText: "ClusterIssuer that signs the certificates, for example with your company CA. It must exist before the instance is created."
+                                        modes:
+                                            edit:
+                                                disabled: true
+                                    validation:
+                                        celExpressions:
+                                            - celExpr: "!has(spec.parameters.tls.issuer) || !has(spec.parameters.tls.issuer.name) || spec.parameters.tls.issuer.name == '' || !has(spec.parameters.tls.rootCASecretName) || spec.parameters.tls.rootCASecretName == ''"
+                                              message: "Use either an issuer or a root CA secret, not both"
+                                issuerKind:
+                                    uiType: select
+                                    path: spec.parameters.tls.issuer.kind
+                                    fieldParams:
+                                        label: "Issuer kind"
+                                        defaultValue: "ClusterIssuer"
+                                        helperText: "Namespaced Issuers aren't supported: the operator would take them over"
+                                        options:
+                                            - label: "ClusterIssuer"
+                                              value: "ClusterIssuer"
+                                        modes:
+                                            edit:
+                                                disabled: true
+                            componentsOrder:
+                                - issuerName
+                                - issuerKind
                         rootCASecretName:
                             uiType: text
                             path: spec.parameters.tls.rootCASecretName
@@ -326,7 +361,8 @@ ui:
                                       message: "Use either a root CA secret or certificate secrets, not both"
                     componentsOrder:
                         - certificateSecretName
-                        - replicationCertificateSecretName
+                        - internalCertificateSecretName
+                        - issuer
                         - rootCASecretName
             componentsOrder:
                 - mode

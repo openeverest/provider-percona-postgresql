@@ -7,7 +7,7 @@ spec:
     tls:
       mode: requireTLS
       certificateSecretName: test-pg-tls-certs
-      replicationCertificateSecretName: test-pg-tls-repl
+      internalCertificateSecretName: test-pg-tls-repl
 ---
 apiVersion: pgv2.percona.com/v2
 kind: PerconaPGCluster

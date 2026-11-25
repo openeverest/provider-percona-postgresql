@@ -16,12 +16,17 @@ package provider
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	pgv2 "github.com/percona/percona-postgresql-operator/v3/pkg/apis/pgv2.percona.com/v2"
+	crunchyv1beta1 "github.com/percona/percona-postgresql-operator/v3/pkg/apis/upstream.pgv2.percona.com/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
@@ -33,6 +38,12 @@ import (
 var _ controller.ReferenceValidator = (*Provider)(nil)
 
 const (
+	certManagerGroup = "cert-manager.io"
+
+	// additionalNamesIssue tracks the operator support additionalNames
+	// waits for.
+	additionalNamesIssue = "https://github.com/percona/percona-postgresql-operator/issues/1811"
+
 	// caKey is the key holding the CA certificate, in the certificate
 	// secrets and in the connection secret.
 	caKey = "ca.crt"
@@ -67,6 +78,15 @@ func tlsParameters(instance *corev1alpha1.Instance) (definition.TLSParameters, e
 	if tls.Mode == "" {
 		tls.Mode = definition.TLSModePrefer
 	}
+	if tls.Issuer != nil && tls.Issuer.Name == "" {
+		tls.Issuer = nil
+	}
+	if tls.Issuer != nil {
+		issuer := *tls.Issuer
+		issuer.Kind = cmp.Or(issuer.Kind, definition.IssuerKindIssuer)
+		issuer.Group = cmp.Or(issuer.Group, certManagerGroup)
+		tls.Issuer = &issuer
+	}
 
 	return tls, nil
 }
@@ -100,11 +120,19 @@ func configureTLS(cluster *pgv2.PerconaPGCluster, tls definition.TLSParameters) 
 	switch {
 	case tls.CertificateSecretName != "":
 		cluster.Spec.Secrets.CustomTLSSecret = secretProjection(tls.CertificateSecretName)
-		cluster.Spec.Secrets.CustomReplicationClientTLSSecret = secretProjection(tls.ReplicationCertificateSecretName)
+		cluster.Spec.Secrets.CustomReplicationClientTLSSecret = secretProjection(tls.InternalCertificateSecretName)
 		if cluster.Spec.Proxy != nil && cluster.Spec.Proxy.PGBouncer != nil {
 			// Clients connect to pgBouncer, not directly to PostgreSQL, so it
 			// needs the same certificate.
 			cluster.Spec.Proxy.PGBouncer.CustomTLSSecret = secretProjection(tls.CertificateSecretName)
+		}
+	case tls.Issuer != nil:
+		cluster.Spec.TLS = &crunchyv1beta1.TLSSpec{
+			IssuerConf: &cmmeta.IssuerReference{
+				Name:  tls.Issuer.Name,
+				Kind:  string(tls.Issuer.Kind),
+				Group: tls.Issuer.Group,
+			},
 		}
 	case tls.RootCASecretName != "":
 		cluster.Spec.Secrets.CustomRootCATLSSecret = secretProjection(tls.RootCASecretName)
@@ -121,18 +149,59 @@ func validateTLSParameters(tls definition.TLSParameters, path *field.Path) field
 			fmt.Sprintf("must be one of %s or %s", definition.TLSModePrefer, definition.TLSModeRequire)))
 	}
 
+	errs = append(errs, validateIssuer(path.Child("issuer"), tls.Issuer)...)
+	if len(tls.AdditionalNames) > 0 {
+		errs = append(errs, field.Forbidden(path.Child("additionalNames"),
+			"not supported yet: the Percona Operator for PostgreSQL can't add names to its certificates ("+
+				additionalNamesIssue+"); issue a certificate with the names and set certificateSecretName instead"))
+	}
+
 	switch {
+	case tls.CertificateSecretName != "" && tls.Issuer != nil:
+		errs = append(errs, field.Forbidden(path.Child("issuer"), "use either certificate secrets or an issuer, not both"))
 	case tls.CertificateSecretName != "" && tls.RootCASecretName != "":
 		errs = append(errs, field.Invalid(path.Child("rootCASecretName"), tls.RootCASecretName,
 			"use either certificate secrets or a root CA secret, not both"))
-	case tls.CertificateSecretName == "" && tls.ReplicationCertificateSecretName != "":
+	case tls.Issuer != nil && tls.RootCASecretName != "":
+		errs = append(errs, field.Forbidden(path.Child("rootCASecretName"), "use either an issuer or a root CA secret, not both"))
+	case tls.CertificateSecretName == "" && tls.InternalCertificateSecretName != "":
 		errs = append(errs, field.Required(path.Child("certificateSecretName"),
-			"required when replicationCertificateSecretName is set"))
-	case tls.CertificateSecretName != "" && tls.ReplicationCertificateSecretName == "":
-		errs = append(errs, field.Required(path.Child("replicationCertificateSecretName"),
+			"required when internalCertificateSecretName is set"))
+	case tls.CertificateSecretName != "" && tls.InternalCertificateSecretName == "":
+		errs = append(errs, field.Required(path.Child("internalCertificateSecretName"),
 			"required when certificateSecretName is set"))
 	}
 
+	return errs
+}
+
+// validateIssuer checks an issuer reference with defaults applied. The
+// operator takes a namespaced Issuer over as its own, whatever the group: it
+// creates a CA issuer of that name or, if one exists, makes the cluster its
+// owner, so it is deleted with the instance. It looks a ClusterIssuer up in
+// cert-manager's group, whatever the group set. Any other kind is an external
+// issuer it leaves to its controller.
+func validateIssuer(path *field.Path, issuer *definition.IssuerReference) field.ErrorList {
+	if issuer == nil {
+		return nil
+	}
+	var errs field.ErrorList
+	if msgs := validation.IsDNS1123Subdomain(issuer.Group); len(msgs) > 0 {
+		errs = append(errs, field.Invalid(path.Child("group"), issuer.Group, strings.Join(msgs, "; ")))
+	}
+	switch {
+	case issuer.Kind == definition.IssuerKindIssuer:
+		errs = append(errs, field.Invalid(path.Child("kind"), issuer.Kind,
+			"a namespaced Issuer is not supported: the Percona Operator for PostgreSQL takes it over as its own "+
+				"and deletes it with the instance; use a ClusterIssuer or an external issuer"))
+	case issuer.Group == certManagerGroup && issuer.Kind != definition.IssuerKindClusterIssuer:
+		errs = append(errs, field.NotSupported(path.Child("kind"), issuer.Kind,
+			[]definition.IssuerKind{definition.IssuerKindClusterIssuer}))
+	case issuer.Group != certManagerGroup && issuer.Kind == definition.IssuerKindClusterIssuer:
+		errs = append(errs, field.Invalid(path.Child("kind"), issuer.Kind,
+			"set the kind of the external issuer, such as AWSPCAClusterIssuer: the operator takes "+
+				"ClusterIssuer for cert-manager's own"))
+	}
 	return errs
 }
 
@@ -153,15 +222,15 @@ func (p *Provider) ValidateReferences(c *controller.Context) (field.ErrorList, e
 		}
 		errs = append(errs, certErrs...)
 
-		replPath := path.Child("replicationCertificateSecretName")
-		replicationCA, replErrs, err := validateCertificateSecret(c, replPath, tls.ReplicationCertificateSecretName)
+		replPath := path.Child("internalCertificateSecretName")
+		replicationCA, replErrs, err := validateCertificateSecret(c, replPath, tls.InternalCertificateSecretName)
 		if err != nil {
 			return nil, err
 		}
 		errs = append(errs, replErrs...)
 
 		if len(certErrs) == 0 && len(replErrs) == 0 && !bytes.Equal(ca, replicationCA) {
-			errs = append(errs, field.Invalid(replPath, tls.ReplicationCertificateSecretName,
+			errs = append(errs, field.Invalid(replPath, tls.InternalCertificateSecretName,
 				"must share the same ca.crt as certificateSecretName"))
 		}
 	}
@@ -233,20 +302,38 @@ func validateTLSChange(c *controller.Context, tls definition.TLSParameters, path
 		return nil, fmt.Errorf("fetching current PerconaPGCluster: %w", err)
 	}
 
-	currentSecret := ""
-	if current.Spec.Secrets.CustomTLSSecret != nil {
-		currentSecret = current.Spec.Secrets.CustomTLSSecret.Name
+	projectionName := func(p *corev1.SecretProjection) string {
+		if p == nil {
+			return ""
+		}
+		return p.Name
 	}
-	currentRootCA := ""
-	if current.Spec.Secrets.CustomRootCATLSSecret != nil {
-		currentRootCA = current.Spec.Secrets.CustomRootCATLSSecret.Name
+	currentIssuer := ""
+	if current.Spec.TLS != nil && current.Spec.TLS.IssuerConf != nil {
+		conf := current.Spec.TLS.IssuerConf
+		currentIssuer = issuerKey(conf.Kind, conf.Name, conf.Group)
+	}
+	wantIssuer := ""
+	if tls.Issuer != nil {
+		wantIssuer = issuerKey(string(tls.Issuer.Kind), tls.Issuer.Name, tls.Issuer.Group)
 	}
 
-	if currentSecret != tls.CertificateSecretName || currentRootCA != tls.RootCASecretName {
-		return field.ErrorList{field.Forbidden(path, "certificates and root CA secret can't change on an existing instance")}, nil
+	if projectionName(current.Spec.Secrets.CustomTLSSecret) != tls.CertificateSecretName ||
+		projectionName(current.Spec.Secrets.CustomReplicationClientTLSSecret) != tls.InternalCertificateSecretName ||
+		projectionName(current.Spec.Secrets.CustomRootCATLSSecret) != tls.RootCASecretName ||
+		currentIssuer != wantIssuer {
+		return field.ErrorList{field.Forbidden(path, "certificates, issuer and root CA secret can't change on an existing instance")}, nil
 	}
 
 	return nil, nil
+}
+
+// issuerKey identifies an issuer, with defaults applied; empty for none.
+func issuerKey(kind, name, group string) string {
+	if name == "" {
+		return ""
+	}
+	return cmp.Or(kind, string(definition.IssuerKindIssuer)) + "/" + name + "." + cmp.Or(group, certManagerGroup)
 }
 
 // tlsConnection returns the CA clients verify the instance with, and the

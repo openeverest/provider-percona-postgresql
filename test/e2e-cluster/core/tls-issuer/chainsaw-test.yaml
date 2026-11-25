@@ -1,0 +1,225 @@
+---
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: core-tls-issuer
+spec:
+  description: |
+    Bring your own CA against a real PG operator and cert-manager: a CA
+    ClusterIssuer stands in for a company CA and signs the instance's
+    certificates (spec.parameters.tls.issuer -> spec.tls.issuerConf). The
+    connection secret carries the company CA, clients connect with
+    sslmode=verify-full against it, plain connections are refused
+    (requireTLS), and the operator leaves the ClusterIssuer alone.
+    Installs cert-manager when it is absent.
+  catch:
+    - script:
+        content: |
+          kubectl -n $NAMESPACE get instance,perconapgclusters.pgv2.percona.com,certificates.cert-manager.io -o yaml
+          kubectl get clusterissuers.cert-manager.io -o yaml
+    - podLogs:
+        namespace: provider-system
+        selector: app.kubernetes.io/name=provider-percona-postgresql
+        tail: 100
+  steps:
+    - name: provider-operator-installed
+      try:
+        - assert:
+            file: 00-assert.yaml
+
+    - name: cert-manager-installed
+      try:
+        - script:
+            timeout: 300s
+            content: |
+              set -e
+              if ! kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; then
+                kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.20.3/cert-manager.yaml
+              fi
+              kubectl -n cert-manager wait --for=condition=Available deploy --all --timeout=240s
+
+    # A ClusterIssuer reads its CA from cert-manager's cluster resource
+    # namespace. Names carry the test namespace so runs don't collide.
+    - name: company-ca-cluster-issuer
+      try:
+        - script:
+            timeout: 150s
+            content: |
+              set -e
+              CA="pg-company-ca-${NAMESPACE}"
+              kubectl apply -f - <<YAML
+              apiVersion: cert-manager.io/v1
+              kind: Issuer
+              metadata:
+                name: ${CA}-selfsigned
+                namespace: cert-manager
+              spec:
+                selfSigned: {}
+              ---
+              apiVersion: cert-manager.io/v1
+              kind: Certificate
+              metadata:
+                name: ${CA}
+                namespace: cert-manager
+              spec:
+                isCA: true
+                commonName: ${CA}
+                secretName: ${CA}
+                privateKey:
+                  algorithm: ECDSA
+                  size: 256
+                issuerRef:
+                  name: ${CA}-selfsigned
+                  kind: Issuer
+                  group: cert-manager.io
+              ---
+              apiVersion: cert-manager.io/v1
+              kind: ClusterIssuer
+              metadata:
+                name: ${CA}
+              spec:
+                ca:
+                  secretName: ${CA}
+              YAML
+              kubectl -n cert-manager wait --for=condition=Ready certificate/${CA} --timeout=120s
+              kubectl wait --for=condition=Ready clusterissuer/${CA} --timeout=120s
+
+    - name: create-cluster
+      try:
+        - script:
+            content: |
+              set -e
+              kubectl apply -n "${NAMESPACE}" -f - <<YAML
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              metadata:
+                name: pg-tls-issuer
+              spec:
+                providerRef:
+                  name: provider-percona-postgresql
+                components:
+                  engine:
+                    type: postgresql
+                    replicas: 1
+                    storage:
+                      size: 1Gi
+                    resources:
+                      limits:
+                        cpu: 600m
+                        memory: 512Mi
+                      requests:
+                        cpu: 300m
+                        memory: 256Mi
+                  proxy:
+                    type: pgbouncer
+                    replicas: 1
+                    resources:
+                      limits:
+                        cpu: 200m
+                        memory: 128Mi
+                parameters:
+                  tls:
+                    mode: requireTLS
+                    issuer:
+                      name: pg-company-ca-${NAMESPACE}
+                      kind: ClusterIssuer
+              YAML
+        - script:
+            timeout: 60s
+            content: |
+              set -e
+              for i in $(seq 1 30); do
+                CONF="$(kubectl get perconapgclusters.pgv2.percona.com/pg-tls-issuer -n "${NAMESPACE}" \
+                  -o jsonpath='{.spec.tls.issuerConf.kind}/{.spec.tls.issuerConf.name}.{.spec.tls.issuerConf.group}' 2>/dev/null || true)"
+                [ "${CONF}" = "ClusterIssuer/pg-company-ca-${NAMESPACE}.cert-manager.io" ] && exit 0
+                sleep 2
+              done
+              echo "unexpected issuerConf: ${CONF}" >&2
+              exit 1
+
+    - name: cluster-ready
+      try:
+        - assert:
+            timeout: 15m
+            file: 20-assert.yaml
+      catch:
+        - script:
+            content: |
+              kubectl -n "${NAMESPACE}" get pods,pvc,perconapgclusters.pgv2.percona.com,instance -o wide
+              kubectl -n "${NAMESPACE}" describe pod -l postgres-operator.crunchydata.com/cluster=pg-tls-issuer || true
+
+    - name: certificates-from-company-ca
+      try:
+        - script:
+            content: |
+              set -e
+              CA="pg-company-ca-${NAMESPACE}"
+              WORKDIR="/tmp/pg-tls-issuer-e2e-${NAMESPACE}"
+              rm -rf "${WORKDIR}" && mkdir -p "${WORKDIR}"
+              kubectl get secret/${CA} -n cert-manager -o jsonpath='{.data.tls\.crt}' | base64 -d > "${WORKDIR}/company-ca.crt"
+              kubectl get secret/pg-tls-issuer-conn -n "${NAMESPACE}" -o jsonpath='{.data.ca\.crt}' | base64 -d > "${WORKDIR}/conn-ca.crt"
+              diff "${WORKDIR}/company-ca.crt" "${WORKDIR}/conn-ca.crt"
+              kubectl get secret/pg-tls-issuer-cluster-cert -n "${NAMESPACE}" -o jsonpath='{.data.tls\.crt}' | base64 -d > "${WORKDIR}/cluster.crt"
+              openssl verify -CAfile "${WORKDIR}/company-ca.crt" "${WORKDIR}/cluster.crt"
+              echo "cluster certificate signed by the company CA; conn secret carries the CA"
+
+    - name: cluster-issuer-left-alone
+      try:
+        - script:
+            content: |
+              set -e
+              CA="pg-company-ca-${NAMESPACE}"
+              OWNERS="$(kubectl get clusterissuer/${CA} -o jsonpath='{.metadata.ownerReferences}')"
+              MANAGED="$(kubectl get clusterissuer/${CA} -o jsonpath='{.metadata.labels.percona\.com/managed-by}')"
+              SECRET="$(kubectl get clusterissuer/${CA} -o jsonpath='{.spec.ca.secretName}')"
+              if [ -n "${OWNERS}${MANAGED}" ] || [ "${SECRET}" != "${CA}" ]; then
+                echo "unexpected: the operator took the ClusterIssuer over: owners=${OWNERS} managed-by=${MANAGED} secret=${SECRET}" >&2
+                exit 1
+              fi
+              if kubectl get secret/${CA}-ca-cert -n cert-manager >/dev/null 2>&1; then
+                echo "unexpected: the operator created its own CA for the ClusterIssuer" >&2
+                exit 1
+              fi
+
+    - name: create-postgresql-client
+      try:
+        - script:
+            timeout: 90s
+            content: |
+              kubectl run -n "${NAMESPACE}" pg-tls-client --env="NO_COLOR=1" --image=postgres:17 --restart=Never --command -- sleep 600
+              kubectl wait --for=condition=Ready pod/pg-tls-client --timeout=80s -n "${NAMESPACE}"
+
+    - name: client-verifies-server-and-plain-is-refused
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              set -e
+              CONN="kubectl get secret/pg-tls-issuer-conn -n ${NAMESPACE} -o jsonpath"
+              HOST="$($CONN='{.data.host}' | base64 -d)"
+              PORT="$($CONN='{.data.port}' | base64 -d)"
+              USER="$($CONN='{.data.username}' | base64 -d)"
+              PASS="$($CONN='{.data.password}' | base64 -d)"
+              $CONN='{.data.ca\.crt}' | base64 -d | kubectl exec -i pg-tls-client -n ${NAMESPACE} -- sh -c 'cat > /tmp/ca.crt'
+              SSL="$(kubectl exec pg-tls-client -n ${NAMESPACE} -- env PGPASSWORD="$PASS" \
+                psql "host=$HOST port=$PORT user=$USER dbname=postgres sslmode=verify-full sslrootcert=/tmp/ca.crt" -tA \
+                -c "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid();")"
+              echo "ssl=${SSL}"
+              test "${SSL}" = "t"
+              if kubectl exec pg-tls-client -n ${NAMESPACE} -- env PGPASSWORD="$PASS" \
+                psql "host=$HOST port=$PORT user=$USER dbname=postgres sslmode=disable" -c 'SELECT 1'; then
+                echo "unexpected: a plain connection was accepted with requireTLS" >&2
+                exit 1
+              fi
+
+    - name: cleanup
+      try:
+        - script:
+            timeout: 180s
+            content: |
+              CA="pg-company-ca-${NAMESPACE}"
+              kubectl delete pod/pg-tls-client -n $NAMESPACE --ignore-not-found --wait=false || true
+              kubectl delete instance/pg-tls-issuer -n $NAMESPACE --ignore-not-found --wait=true --timeout=150s || true
+              kubectl delete clusterissuer/${CA} --ignore-not-found || true
+              kubectl -n cert-manager delete certificate/${CA} issuer/${CA}-selfsigned secret/${CA} --ignore-not-found || true
+              rm -rf "/tmp/pg-tls-issuer-e2e-${NAMESPACE}" || true

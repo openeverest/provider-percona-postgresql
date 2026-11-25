@@ -18,5 +18,5 @@ spec:
     tls:
       mode: requireTLS
       certificateSecretName: test-pg-tls-certs
-      replicationCertificateSecretName: test-pg-tls-repl
+      internalCertificateSecretName: test-pg-tls-repl
 

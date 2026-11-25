@@ -1,0 +1,12 @@
+apiVersion: pgv2.percona.com/v2
+kind: PerconaPGCluster
+metadata:
+  name: test-pg-tls-issuer
+spec:
+  tls:
+    issuerConf:
+      name: corp-pca
+      kind: AWSPCAClusterIssuer
+      group: awspca.cert-manager.io
+  (secrets.customTLSSecret == null): true
+  (secrets.customRootCATLSSecret == null): true

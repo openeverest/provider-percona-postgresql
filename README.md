@@ -70,7 +70,7 @@ provider itself is covered under [Installation](#installation).
 | Custom configuration | ✅ | `spec.components.engine.parameters.configuration` — see [Custom PostgreSQL configuration](#custom-postgresql-configuration) |
 | Exposure | ✅ | `spec.components.<name>.service.serviceType`: `ClusterIP` (default), `LoadBalancer` or `NodePort`, for `engine` and `proxy` independently — both are exposed in the UI. `proxy.service` controls how clients reach pgBouncer (needs `proxy.replicas` ≥ 1) and is how most clients should connect; `engine.service` exposes the PostgreSQL primary and replica Services directly, bypassing pgBouncer, for clients that need a direct connection. `service.annotations` and, for `LoadBalancer`, `service.loadBalancerService.sourceRanges` are also supported on both, but only via the `Instance` spec directly — the UI doesn't expose them yet ([openeverest#1959](https://github.com/openeverest/openeverest/issues/1959), [openeverest#2398](https://github.com/openeverest/openeverest/issues/2398)) |
 | Monitoring | ✅ | via `spec.monitoring.destinations`: PMM 3 (`pmm` class), and Prometheus / VictoriaMetrics (or any metrics class) through `postgres_exporter` and `pgbouncer_exporter` sidecars — see [Monitoring](#monitoring) |
-| TLS | ✅ | on by default; generated, or your own certificates — see [TLS](#tls) |
+| TLS | ✅ | on by default; generated, from your cert-manager issuer or CA, or your own certificates — see [TLS](#tls) |
 | Client access rules (pg_hba) | ✅ | `spec.components.engine.parameters.pgHBA` — which clients may connect to which databases as which users; see [Client access rules](#client-access-rules-pg_hba) |
 | Logs | ✅ | on by default for new instances: PostgreSQL and pgBackRest logs streamed by a log collector sidecar — see [Logs](#logs) |
 
@@ -313,10 +313,14 @@ spec:
       mode: requireTLS                            # preferTLS (default) | requireTLS
       # Bring your own certificates, or leave empty to have the operator issue them:
       certificateSecretName: my-tls                # tls.crt, tls.key and ca.crt
-      replicationCertificateSecretName: my-tls-repl # same ca.crt, for members
-      # Or bring your own CA instead, and let the operator issue certificates
-      # signed by it (mutually exclusive with certificateSecretName):
-      # rootCASecretName: my-ca                     # root.crt and root.key
+      internalCertificateSecretName: my-tls-repl   # same ca.crt, for replication
+      # Or have a cert-manager issuer sign them (needs cert-manager):
+      # issuer:
+      #   name: company-ca
+      #   kind: ClusterIssuer                      # or an external issuer's kind
+      #   group: cert-manager.io                   # default; e.g. awspca.cert-manager.io
+      # Or bring your own CA secret, and let the operator sign with it:
+      # rootCASecretName: my-ca                    # root.crt and root.key
 ```
 
 - **`preferTLS`** (default) lets clients connect to PostgreSQL directly with or without TLS.
@@ -324,18 +328,90 @@ spec:
   go through pgBouncer — are unaffected by this setting. **`requireTLS`** rejects any
   non-TLS connection, direct or through pgBouncer.
 - **Certificates** are, in order of precedence:
-  1. your secrets: `certificateSecretName` and `replicationCertificateSecretName`, which must
+  1. your secrets: `certificateSecretName` and `internalCertificateSecretName` (the client
+     certificate members authenticate replication with, CN `_crunchyrepl`), which must
      share the same `ca.crt`. Their subject alternative names must cover the instance's
      service and pod names. The operator never replaces these secrets with its own;
-  2. a CA you provide (`rootCASecretName`): the operator issues certificates signed by it;
-  3. otherwise the operator issues them: through cert-manager when it is installed, or else
+  2. a cert-manager issuer (`issuer`): cert-manager issues the certificates, signed by it.
+     The issuer must write its CA to `ca.crt`, as the CA and Vault issuers do. Use a
+     `ClusterIssuer`, or an external issuer with its `kind` and `group` (AWS PCA, Google CAS,
+     …). A namespaced `Issuer` is rejected: the operator takes it over as its own and
+     deletes it with the instance. Create the ClusterIssuer before the instance — the
+     operator creates a self-signed ClusterIssuer under a name it can't find;
+  3. a CA secret you provide (`rootCASecretName`): the operator issues certificates signed by it;
+  4. otherwise the operator issues them: through cert-manager when it is installed, or else
      from a CA it generates once.
 
-  The certificate source can't be changed after creation, as a new CA would stop existing
+  Only one of `certificateSecretName`, `issuer` and `rootCASecretName` can be set. The
+  certificate source can't be changed after creation, as a new CA would stop existing
   clients and members from trusting the instance.
+- **`additionalNames`** (extra DNS names on the certificates) is part of the common TLS
+  shape but is rejected for now: the operator can't add names to the certificates it issues
+  ([percona/percona-postgresql-operator#1811](https://github.com/percona/percona-postgresql-operator/issues/1811)).
+  Meanwhile, issue a certificate with the names yourself (for example a cert-manager
+  `Certificate`) and set `certificateSecretName`.
 - **Clients** need only the CA to verify the instance: the connection secret
   (`.status.connectionSecretRef.name`) carries it as `ca.crt`, and its `uri` sets `sslmode`
   to match the mode and how clients reach the instance.
+
+#### Bring your own CA
+
+Have cert-manager sign the instance's certificates with your company CA:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: company-ca
+  namespace: cert-manager          # cert-manager's cluster resource namespace
+type: kubernetes.io/tls
+data:
+  tls.crt: <base64 CA certificate>
+  tls.key: <base64 CA key>
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: company-ca
+spec:
+  ca:
+    secretName: company-ca
+```
+
+Then create the instance with the issuer
+([`examples/instance-tls.yaml`](examples/instance-tls.yaml)):
+
+```yaml
+spec:
+  parameters:
+    tls:
+      mode: requireTLS
+      issuer:
+        name: company-ca
+        kind: ClusterIssuer
+```
+
+Clients verify the instance with the company CA, which `ca.crt` in the connection secret
+also carries, for example with libpq's `sslmode=verify-full sslrootcert=ca.crt`.
+
+#### Migrating from `replicationCertificateSecretName`
+
+`replicationCertificateSecretName` was renamed to `internalCertificateSecretName`, the
+name every provider uses. The old field is no longer accepted, and an Instance that still
+sets it is held with a validation error (its cluster keeps running untouched). Right after
+upgrading the provider, rename it in each Instance that sets it. The value stays the same,
+so nothing restarts:
+
+```sh
+kubectl get instances -A -o json | jq -r '.items[]
+  | select(.spec.parameters.tls.replicationCertificateSecretName)
+  | "\(.metadata.namespace) \(.metadata.name) \(.spec.parameters.tls.replicationCertificateSecretName)"' |
+while read -r ns name secret; do
+  kubectl -n "$ns" patch instance "$name" --type=json -p "[
+    {\"op\":\"remove\",\"path\":\"/spec/parameters/tls/replicationCertificateSecretName\"},
+    {\"op\":\"add\",\"path\":\"/spec/parameters/tls/internalCertificateSecretName\",\"value\":\"$secret\"}]"
+done
+```
 
 ### Client access rules (pg_hba)
 

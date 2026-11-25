@@ -1,0 +1,25 @@
+# Instance whose certificates a cert-manager ClusterIssuer signs, for example
+# with your company CA. Create the ClusterIssuer first; see "Bring your own CA"
+# in the README.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: my-database-tls
+spec:
+  providerRef:
+    name: provider-percona-postgresql
+  parameters:
+    tls:
+      mode: requireTLS
+      issuer:
+        name: company-ca
+        kind: ClusterIssuer
+  components:
+    engine:
+      type: postgresql
+      replicas: 3
+      storage:
+        size: 10Gi
+    proxy:
+      type: pgbouncer
+      replicas: 2

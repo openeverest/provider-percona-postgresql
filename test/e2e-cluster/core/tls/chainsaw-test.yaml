@@ -7,7 +7,7 @@ spec:
   description: |
     TLS against a real PG operator: generate a self-signed CA and a server
     and replication certificate, create an Instance with
-    spec.parameters.tls.certificateSecretName / .replicationCertificateSecretName
+    spec.parameters.tls.certificateSecretName / .internalCertificateSecretName
     pointing at them, and verify end to end that the operator leaves the
     secrets alone, the connection secret carries the CA, the client
     connection actually negotiates TLS, and pgBouncer presents the

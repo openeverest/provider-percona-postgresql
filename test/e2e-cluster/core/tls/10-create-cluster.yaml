@@ -35,5 +35,5 @@ spec:
       # The secrets are created by the generate-certificate-and-secrets step,
       # before this file is applied.
       certificateSecretName: pg-tls-certs
-      replicationCertificateSecretName: pg-tls-repl
+      internalCertificateSecretName: pg-tls-repl
 
