@@ -13,7 +13,9 @@ kind: Instance
 metadata:
   name: pg-src
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'] | [0].status): "True"
+  (conditions[?type == 'Available'] | [0].status): "True"
 ---
 apiVersion: v1
 kind: Secret

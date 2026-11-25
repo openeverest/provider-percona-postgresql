@@ -4,7 +4,7 @@ metadata:
   name: test-pg-tls-bothset
 status:
   # See the comment in 30-assert.yaml: a brand-new Instance that fails
-  # validation is left Pending, not Failed.
+  # validation has never been available, so it is Pending.
   phase: Pending
   (conditions[?type == 'Ready'] | [0].status): "False"
   (conditions[?type == 'Ready'] | [0].reason): ValidationFailed

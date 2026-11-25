@@ -44,7 +44,7 @@ CHART_DIR ?= charts/provider-percona-postgresql
 K3D_CLUSTER_NAME ?= provider-percona-postgresql-test
 
 # PG operator version used for CRD installation in CI
-PG_OPERATOR_VERSION ?= 3.0.0
+PG_OPERATOR_VERSION ?= 3.1.0
 
 # PG operator replicas to deploy alongside the provider in integration envs.
 PG_OPERATOR_REPLICA_COUNT ?= 1
@@ -101,11 +101,11 @@ generate: manifests helm-sync-rbac ## Run all code generation (RBAC + Helm sync 
 .PHONY: verify
 verify: ## Verify that generated files are up-to-date (for CI).
 	@$(MAKE) generate
-	@if git diff --quiet -- config/ $(CHART_DIR)/generated/; then \
+	@if git diff --quiet -- config/ definition/ $(CHART_DIR)/generated/; then \
 		echo "Generated files are up-to-date."; \
 	else \
 		echo "ERROR: Generated files are out of date. Run 'make generate' and commit the changes."; \
-		git diff -- config/ $(CHART_DIR)/generated/; \
+		git diff -- config/ definition/ $(CHART_DIR)/generated/; \
 		exit 1; \
 	fi
 

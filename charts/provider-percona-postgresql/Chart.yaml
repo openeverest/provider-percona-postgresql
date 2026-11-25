@@ -2,8 +2,8 @@ apiVersion: v2
 name: provider-percona-postgresql
 description: A Helm chart for deploying the OpenEverest provider-percona-postgresql provider
 type: application
-version: 0.6.0
-appVersion: "0.6.0"
+version: 0.7.0
+appVersion: "0.7.0"
 keywords:
   - openeverest
   - provider
@@ -15,6 +15,6 @@ maintainers:
   - name: OpenEverest Contributors
 dependencies:
   - name: pg-operator
-    version: "3.0.0"
+    version: "3.1.0"
     repository: https://percona.github.io/percona-helm-charts/
     condition: pg-operator.enabled

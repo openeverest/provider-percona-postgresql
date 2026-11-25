@@ -27,7 +27,9 @@ spec:
                 podAffinityTerm:
                   topologyKey: topology.kubernetes.io/zone
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'] | [0].status): "True"
+  (conditions[?type == 'Available'] | [0].status): "True"
 ---
 apiVersion: pgv2.percona.com/v2
 kind: PerconaPGCluster

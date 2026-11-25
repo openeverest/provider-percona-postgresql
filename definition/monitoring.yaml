@@ -2,9 +2,10 @@
 # Run `make generate` after making changes.
 #
 # integrations: operator-native integrations rendered in Sync (spec.pmm).
-# componentTypes: what each component type from provider.yaml exposes; every
-# PostgreSQL pod can run a postgres_exporter sidecar and every PgBouncer pod a
-# pgbouncer_exporter sidecar.
+# componentTypes: what each component type from provider.yaml exposes (its
+# kind is declared in provider.yaml); every PostgreSQL pod can run a
+# postgres_exporter sidecar and every PgBouncer pod a pgbouncer_exporter
+# sidecar.
 
 integrations:
     pmm:
@@ -12,8 +13,6 @@ integrations:
         authModes: [ServiceAccountToken]
 componentTypes:
     postgresql:
-        kind: postgresql
         metrics: Exporter
     pgbouncer:
-        kind: pgbouncer
         metrics: Exporter

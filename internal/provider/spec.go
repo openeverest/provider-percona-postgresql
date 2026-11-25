@@ -3,8 +3,8 @@ package provider
 import (
 	corev1 "k8s.io/api/core/v1"
 
-	pgversion "github.com/percona/percona-postgresql-operator/v2/percona/version"
-	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
+	pgversion "github.com/percona/percona-postgresql-operator/v3/percona/version"
+	pgv2 "github.com/percona/percona-postgresql-operator/v3/pkg/apis/pgv2.percona.com/v2"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 

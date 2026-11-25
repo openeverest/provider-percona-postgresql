@@ -15,7 +15,9 @@ spec:
       type: pgbouncer
       replicas: 1
 status:
-  phase: Ready
+  phase: Provisioned
+  (conditions[?type == 'Ready'] | [0].status): "True"
+  (conditions[?type == 'Available'] | [0].status): "True"
 ---
 apiVersion: pgv2.percona.com/v2
 kind: PerconaPGCluster
@@ -24,10 +26,10 @@ metadata:
 spec:
   instances:
     - replicas: 5
-  proxy:
-    pgBouncer:
-      expose:
-        type: ClusterIP
+  expose:
+    type: ClusterIP
+  exposeReplicas:
+    type: ClusterIP
 status:
   postgres:
     size: 5

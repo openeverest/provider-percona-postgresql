@@ -9,8 +9,8 @@ import (
 	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
-	pgv2 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/pgv2.percona.com/v2"
-	upstreamv1beta1 "github.com/percona/percona-postgresql-operator/v2/pkg/apis/upstream.pgv2.percona.com/v1beta1"
+	pgv2 "github.com/percona/percona-postgresql-operator/v3/pkg/apis/pgv2.percona.com/v2"
+	upstreamv1beta1 "github.com/percona/percona-postgresql-operator/v3/pkg/apis/upstream.pgv2.percona.com/v1beta1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -63,8 +63,8 @@ func metricsTestProvider() *corev1alpha1.Provider {
 			Monitoring: &corev1alpha1.ProviderMonitoring{
 				Integrations: map[string]corev1alpha1.MonitoringIntegration{"pmm": {AgentVersions: ">=3.0.0 <4.0.0"}},
 				ComponentTypes: map[string]corev1alpha1.MonitoringComponentType{
-					componentTypePostgreSQL: {Kind: "postgresql", Metrics: corev1alpha1.MetricsSourceExporter},
-					componentTypePGBouncer:  {Kind: "pgbouncer", Metrics: corev1alpha1.MetricsSourceExporter},
+					componentTypePostgreSQL: {Metrics: corev1alpha1.MetricsSourceExporter},
+					componentTypePGBouncer:  {Metrics: corev1alpha1.MetricsSourceExporter},
 				},
 			},
 		},
