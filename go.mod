@@ -110,7 +110,7 @@ require (
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/oklog/ulid/v2 v2.1.2 // indirect
-	github.com/openeverest/provider-sdk v0.4.1-0.20261125164134-84eb5fe3608e // indirect
+	github.com/openeverest/provider-sdk v0.4.1-0.20261125181151-9bdf7ebde95a // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.24.0 // indirect

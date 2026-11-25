@@ -112,6 +112,11 @@ helm install provider-percona-postgresql \
   release and the later ones that keep its contract, such as its patch releases, and expires
   with the first OpenEverest release that changes the contract; set ahead of an upgrade, it
   does nothing until that release is installed.
+- The chart sets no annotation for any tool itself: `openeverest.annotations` adds
+  annotations to the `Provider` and its `BackupClass`. With
+  `argocd.argoproj.io/sync-wave: "-1"`, for example, Argo CD applies them before the provider
+  and the bundled operator, so an OpenEverest that refuses them stops the sync before
+  anything starts.
 
 To install from a checkout instead, `make helm-install` builds the chart dependencies
 and installs it against your current kube context.
