@@ -93,6 +93,8 @@ func TestMirrorScheduledBackup(t *testing.T) {
 	require.Equal(t, "PerconaPGBackup", owner.Kind)
 	require.Equal(t, opBackup.Name, owner.Name)
 	require.Equal(t, opBackup.UID, owner.UID)
+	require.NotNil(t, mirror.Spec.Parameters, "mirrored backup should carry the pgBackRest type")
+	require.JSONEq(t, `{"type":"full"}`, string(mirror.Spec.Parameters.Raw))
 }
 
 func TestMirrorSkipsOnDemandBackup(t *testing.T) {
@@ -296,6 +298,8 @@ func TestMirrorScheduledBackupIncremental(t *testing.T) {
 	require.NotNil(t, mirror, "should create a Backup CR for scheduled incremental backup")
 	require.Equal(t, "hourly-incr", mirror.Spec.ScheduleName, "schedule name should be the matching schedule's Name")
 	require.Equal(t, "bucket-2", mirror.Spec.StorageRef.Name, "storage name should be resolved from slot map for repo2")
+	require.NotNil(t, mirror.Spec.Parameters, "mirrored backup should carry the pgBackRest type")
+	require.JSONEq(t, `{"type":"incr"}`, string(mirror.Spec.Parameters.Raw))
 }
 
 func TestDeriveBackupType(t *testing.T) {

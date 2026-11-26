@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -129,6 +131,11 @@ func (p *Provider) Mirror(ctx context.Context, c client.Client, obj client.Objec
 		return nil, nil
 	}
 
+	parameters, err := backupParametersForType(backupType)
+	if err != nil {
+		return nil, fmt.Errorf("encode backup parameters: %w", err)
+	}
+
 	return &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pgBackup.Name,
@@ -148,8 +155,27 @@ func (p *Provider) Mirror(ctx context.Context, c client.Client, obj client.Objec
 			ClassRef:     apicommon.ObjectRef{Name: instance.Spec.Backup.ClassRef.Name},
 			StorageRef:   apicommon.ObjectRef{Name: storageName},
 			ScheduleName: scheduleNameForType(instance.Spec.Backup, storageName, backupType),
+			Parameters:   parameters,
 		},
 	}, nil
+}
+
+// backupParametersForType encodes backupType as the "pg" BackupClass's
+// Backup.spec.parameters (PgBackupConfig), so mirrored Backups surface the
+// pgBackRest type (full/diff/incr) the operator actually ran -- not just the
+// implied "full" default -- the same way on-demand Backups do when a user
+// sets spec.parameters.type.
+func backupParametersForType(backupType pg.PgBackupType) (*runtime.RawExtension, error) {
+	if !slices.Contains(pg.PgBackupTypes, backupType) {
+		// Opaque fallback type (name couldn't be parsed); leave parameters
+		// unset rather than encoding an invalid enum value.
+		return nil, nil
+	}
+	raw, err := json.Marshal(pg.PgBackupConfig{Type: backupType})
+	if err != nil {
+		return nil, err
+	}
+	return &runtime.RawExtension{Raw: raw}, nil
 }
 
 // scheduleNameForType returns the user-facing Name of the
