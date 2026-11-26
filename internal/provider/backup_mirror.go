@@ -17,6 +17,7 @@ import (
 	s3class "github.com/openeverest/openeverest/v2/backupstorageclasses/s3"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 	"github.com/openeverest/provider-percona-postgresql/definition/backupclasses"
+	"github.com/openeverest/provider-percona-postgresql/definition/backupclasses/pg"
 	pgv2 "github.com/percona/percona-postgresql-operator/v3/pkg/apis/pgv2.percona.com/v2"
 	upstreamv1beta1 "github.com/percona/percona-postgresql-operator/v3/pkg/apis/upstream.pgv2.percona.com/v1beta1"
 	corev1 "k8s.io/api/core/v1"
@@ -603,12 +604,12 @@ func buildPGBackRestSchedules(schedules []corev1alpha1.InstanceBackupSchedule) *
 		// Map schedule names to pgBackRest backup types.
 		// Default to full backup if not specified.
 		cron := schedule.Cron
-		switch strings.ToLower(schedule.Name) {
-		case "full":
+		switch pg.PgBackupType(strings.ToLower(schedule.Name)) {
+		case pg.PgBackupTypeFull:
 			s.Full = &cron
-		case "diff":
+		case pg.PgBackupTypeDiff:
 			s.Differential = &cron
-		case "incr":
+		case pg.PgBackupTypeIncr:
 			s.Incremental = &cron
 		default:
 			// Default unrecognized schedule names to full backup.
@@ -637,16 +638,16 @@ func applyRetentionConfig(globalConfig map[string]string, repoName string, sched
 		if err != nil {
 			return fmt.Errorf("schedule %q: %w", schedule.Name, err)
 		}
-		switch strings.ToLower(schedule.Name) {
-		case "full", "":
+		switch pg.PgBackupType(strings.ToLower(schedule.Name)) {
+		case pg.PgBackupTypeFull, "":
 			globalConfig[repoName+"-retention-full"] = value
 			globalConfig[repoName+"-retention-full-type"] = retentionType
-		case "diff":
+		case pg.PgBackupTypeDiff:
 			if retentionType != "count" {
 				return fmt.Errorf("schedule %q: pgBackRest only supports count retention for differential backups", schedule.Name)
 			}
 			globalConfig[repoName+"-retention-diff"] = value
-		case "incr":
+		case pg.PgBackupTypeIncr:
 			// pgBackRest does not have a separate retention key for
 			// incremental backups — incremental retention is tied to the
 			// full backup retention. Setting full retention here ensures

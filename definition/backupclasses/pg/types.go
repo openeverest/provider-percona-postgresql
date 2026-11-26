@@ -11,6 +11,20 @@ package pg
 // +kubebuilder:validation:Enum=full;diff;incr
 type PgBackupType string
 
+const (
+	// PgBackupTypeFull creates a self-contained backup.
+	PgBackupTypeFull PgBackupType = "full"
+	// PgBackupTypeDiff backs up pages changed since the last full backup.
+	PgBackupTypeDiff PgBackupType = "diff"
+	// PgBackupTypeIncr backs up pages changed since the last backup of any
+	// type (full, diff, or incr).
+	PgBackupTypeIncr PgBackupType = "incr"
+)
+
+// PgBackupTypes lists all valid PgBackupType values, in the order they are
+// defined in the enum.
+var PgBackupTypes = []PgBackupType{PgBackupTypeFull, PgBackupTypeDiff, PgBackupTypeIncr}
+
 // PgBackupConfig describes the configuration accepted by Backup CRs that
 // target this class (spec.parameters). Add fields the user can set per backup.
 type PgBackupConfig struct {

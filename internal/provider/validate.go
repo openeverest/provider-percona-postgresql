@@ -16,12 +16,14 @@ package provider
 
 import (
 	"errors"
+	"slices"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
+	"github.com/openeverest/provider-percona-postgresql/definition/backupclasses/pg"
 	"github.com/openeverest/provider-percona-postgresql/internal/common"
 )
 
@@ -112,7 +114,33 @@ func (p *Provider) Validate(in controller.ValidationInput) controller.Validation
 		errs = append(errs, validateTLSParameters(tls, field.NewPath("spec", "parameters", "tls"))...)
 	}
 
+	errs = append(errs, validateBackupScheduleTypes(instance)...)
+
 	return controller.ValidationResult{Errors: errs}
+}
+
+// validateBackupScheduleTypes checks that every backup schedule's Name is one
+// of the pgBackRest backup types the "pg" BackupClass accepts (full/diff/incr).
+// A schedule's Name doubles as its backup type (buildPGBackRestSchedules maps
+// it to the matching pgBackRest scheduler slot), so an unrecognized name would
+// otherwise fall back to a full backup silently.
+func validateBackupScheduleTypes(instance *corev1alpha1.Instance) field.ErrorList {
+	if instance.Spec.Backup == nil {
+		return nil
+	}
+	var errs field.ErrorList
+	storagesPath := field.NewPath("spec", "backup", "storages")
+	for i, storage := range instance.Spec.Backup.Storages {
+		schedulesPath := storagesPath.Index(i).Child("schedules")
+		for j, schedule := range storage.Schedules {
+			if !slices.Contains(pg.PgBackupTypes, pg.PgBackupType(schedule.Name)) {
+				errs = append(errs, field.NotSupported(
+					schedulesPath.Index(j).Child("name"), schedule.Name, pg.PgBackupTypes,
+				))
+			}
+		}
+	}
+	return errs
 }
 
 // validateImage checks that the component's image can be resolved: from its
