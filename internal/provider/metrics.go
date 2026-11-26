@@ -40,7 +40,8 @@ const (
 	defaultPGBouncerPort int32 = 5432
 
 	// exporterUID is the "nobody" user both exporter images run as. It is set
-	// numerically so runAsNonRoot can be verified.
+	// numerically so runAsNonRoot can be verified, except on OpenShift, whose
+	// SCC assigns a UID from the namespace range and rejects any other.
 	exporterUID int64 = 65534
 )
 
@@ -80,6 +81,15 @@ func configureMetricsExporters(c *controller.Context, cluster *pgv2.PerconaPGClu
 		return fmt.Errorf("provider spec has no image for component type %q", pgbouncerExporterComponentType)
 	}
 
+	openShift, err := isOpenShift(c.Client())
+	if err != nil {
+		return err
+	}
+	var runAsUser *int64
+	if !openShift {
+		runAsUser = new(exporterUID)
+	}
+
 	secretName := monitorUserSecretName(c.Name())
 	cluster.Spec.Users = append(cluster.Spec.Users, upstreamv1beta1.PostgresUserSpec{
 		Name:    monitorUsername,
@@ -95,7 +105,7 @@ func configureMetricsExporters(c *controller.Context, cluster *pgv2.PerconaPGClu
 	}
 	for i := range cluster.Spec.InstanceSets {
 		set := &cluster.Spec.InstanceSets[i]
-		set.Sidecars = append(set.Sidecars, postgresExporterSidecar(postgresImage, secretName, postgresPort))
+		set.Sidecars = append(set.Sidecars, postgresExporterSidecar(postgresImage, secretName, postgresPort, runAsUser))
 	}
 
 	if cluster.Spec.Proxy == nil || cluster.Spec.Proxy.PGBouncer == nil {
@@ -106,7 +116,7 @@ func configureMetricsExporters(c *controller.Context, cluster *pgv2.PerconaPGClu
 	if bouncer.Port != nil {
 		bouncerPort = *bouncer.Port
 	}
-	bouncer.Sidecars = append(bouncer.Sidecars, pgbouncerExporterSidecar(pgbouncerImage, secretName, bouncerPort))
+	bouncer.Sidecars = append(bouncer.Sidecars, pgbouncerExporterSidecar(pgbouncerImage, secretName, bouncerPort, runAsUser))
 	if bouncer.Config.Global == nil {
 		bouncer.Config.Global = map[string]string{}
 	}
@@ -162,8 +172,8 @@ func hasContainer(containers []corev1.Container, name string) bool {
 // postgresExporterSidecar scrapes the PostgreSQL server in its own pod. The
 // operator's pg_hba only admits TCP clients over TLS with a password, so the
 // exporter connects to the loopback address with sslmode=require.
-func postgresExporterSidecar(image, secretName string, port int32) corev1.Container {
-	return exporterSidecar(postgresExporterContainerName, image, postgresExporterPort,
+func postgresExporterSidecar(image, secretName string, port int32, runAsUser *int64) corev1.Container {
+	return exporterSidecar(postgresExporterContainerName, image, postgresExporterPort, runAsUser,
 		[]string{fmt.Sprintf("--web.listen-address=:%d", postgresExporterPort)},
 		[]corev1.EnvVar{
 			{Name: "DATA_SOURCE_URI", Value: fmt.Sprintf("127.0.0.1:%d/postgres?sslmode=require", port)},
@@ -175,8 +185,8 @@ func postgresExporterSidecar(image, secretName string, port int32) corev1.Contai
 
 // pgbouncerExporterSidecar scrapes the PgBouncer admin console in its own pod.
 // The operator configures PgBouncer to require TLS from clients.
-func pgbouncerExporterSidecar(image, secretName string, port int32) corev1.Container {
-	return exporterSidecar(pgbouncerExporterContainerName, image, pgbouncerExporterPort,
+func pgbouncerExporterSidecar(image, secretName string, port int32, runAsUser *int64) corev1.Container {
+	return exporterSidecar(pgbouncerExporterContainerName, image, pgbouncerExporterPort, runAsUser,
 		[]string{
 			fmt.Sprintf("--pgBouncer.connectionString=postgres://127.0.0.1:%d/pgbouncer?sslmode=require", port),
 			fmt.Sprintf("--web.listen-address=:%d", pgbouncerExporterPort),
@@ -192,8 +202,8 @@ func pgbouncerExporterSidecar(image, secretName string, port int32) corev1.Conta
 
 // exporterSidecar builds an exporter container with the restricted security
 // context the operator gives its own containers, which it does not apply to
-// sidecars.
-func exporterSidecar(name, image string, port int32, args []string, env []corev1.EnvVar) corev1.Container {
+// sidecars. A nil runAsUser leaves the UID to the platform.
+func exporterSidecar(name, image string, port int32, runAsUser *int64, args []string, env []corev1.EnvVar) corev1.Container {
 	return corev1.Container{
 		Name:  name,
 		Image: image,
@@ -213,7 +223,7 @@ func exporterSidecar(name, image string, port int32, args []string, env []corev1
 			Privileged:               new(false),
 			ReadOnlyRootFilesystem:   new(true),
 			RunAsNonRoot:             new(true),
-			RunAsUser:                new(exporterUID),
+			RunAsUser:                runAsUser,
 			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 	}

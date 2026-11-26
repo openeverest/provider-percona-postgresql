@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -234,6 +235,24 @@ func TestConfigureMetricsExportersRendersBothExporters(t *testing.T) {
 		assert.Equal(t, []corev1.Capability{"ALL"}, sc.Capabilities.Drop, sidecar.Name)
 		assert.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, sc.SeccompProfile.Type, sidecar.Name)
 		assert.Equal(t, "64Mi", sidecar.Resources.Requests.Memory().String(), sidecar.Name)
+	}
+}
+
+func TestConfigureMetricsExportersLeavesTheUIDToOpenShift(t *testing.T) {
+	t.Parallel()
+
+	mapper := meta.NewDefaultRESTMapper(nil)
+	mapper.Add(sccKind.WithVersion("v1"), meta.RESTScopeRoot)
+	k8s := fake.NewClientBuilder().WithScheme(metricsTestScheme(t)).WithRESTMapper(mapper).
+		WithObjects(metricsTestProvider(), metricsClass("prometheus"), extensionBinding("prometheus")).Build()
+	c := controller.NewContext(t.Context(), k8s, monitoredInstance("prometheus"), common.ProviderName)
+	cluster := desiredCluster()
+
+	require.NoError(t, configureMetricsExporters(c, cluster))
+
+	for _, sidecar := range []corev1.Container{cluster.Spec.InstanceSets[0].Sidecars[0], cluster.Spec.Proxy.PGBouncer.Sidecars[0]} {
+		assert.Nil(t, sidecar.SecurityContext.RunAsUser, "%s: restricted-v2 rejects UIDs outside the namespace range", sidecar.Name)
+		assert.Equal(t, new(true), sidecar.SecurityContext.RunAsNonRoot, sidecar.Name)
 	}
 }
 
