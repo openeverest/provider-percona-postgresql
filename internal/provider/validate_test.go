@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller/validationtest"
 
@@ -38,6 +39,30 @@ func component(name string, mutate func(*corev1alpha1.ComponentSpec)) func(*core
 		mutate(&c)
 		in.Spec.Components[name] = c
 	}
+}
+
+// schedules gives the Instance one backup storage with the given schedules.
+func schedules(list ...corev1alpha1.InstanceBackupSchedule) func(*corev1alpha1.Instance) {
+	return func(in *corev1alpha1.Instance) {
+		in.Spec.Backup = &corev1alpha1.InstanceBackupSpec{
+			Enabled:  true,
+			ClassRef: apicommon.ObjectRef{Name: "pg"},
+			Storages: []corev1alpha1.InstanceBackupStorage{{
+				StorageRef: apicommon.ObjectRef{Name: "minio"},
+				Schedules:  list,
+			}},
+		}
+	}
+}
+
+// keep is count retention of n backups.
+func keep(n int32) *corev1alpha1.BackupScheduleRetention {
+	return &corev1alpha1.BackupScheduleRetention{Type: corev1alpha1.BackupScheduleRetentionTypeCount, Count: &n}
+}
+
+// window is time-based retention over duration d (e.g. "7d", "4w").
+func window(d string) *corev1alpha1.BackupScheduleRetention {
+	return &corev1alpha1.BackupScheduleRetention{Type: corev1alpha1.BackupScheduleRetentionTypeTime, Duration: d}
 }
 
 // TestValidate runs the checks the runtime runs before every Sync: the
@@ -142,6 +167,70 @@ func TestValidate(t *testing.T) {
 				c.SchedulingPolicy = spreadPolicy()
 			}),
 			want: []string{"spec.components[engine].schedulingPolicy.topologySpreadConstraints"},
+		},
+		{
+			name: "schedule for each backup type",
+			mutate: schedules(
+				corev1alpha1.InstanceBackupSchedule{Name: "weekly-full", Enabled: true, Cron: "0 1 * * 0", Parameters: raw(`{"type":"full"}`)},
+				corev1alpha1.InstanceBackupSchedule{Name: "weekday-diff", Enabled: true, Cron: "0 1 * * 1-6", Retention: keep(3), Parameters: raw(`{"type":"diff"}`)},
+				corev1alpha1.InstanceBackupSchedule{Name: "hourly-incr", Enabled: true, Cron: "0 * * * *", Parameters: raw(`{"type":"incr"}`)},
+			),
+		},
+		{
+			name: "schedule name is an arbitrary user-facing identifier, not a type",
+			mutate: schedules(
+				corev1alpha1.InstanceBackupSchedule{Name: "backup-g9y", Enabled: true, Cron: "0 1 * * *", Parameters: raw(`{"type":"full"}`)},
+			),
+		},
+		{
+			name: "two enabled schedules of the same effective type on a storage",
+			mutate: schedules(
+				corev1alpha1.InstanceBackupSchedule{Name: "weekly-full", Enabled: true, Cron: "0 1 * * 0"},
+				corev1alpha1.InstanceBackupSchedule{Name: "monthly-full", Enabled: true, Cron: "0 1 1 * *"},
+			),
+			want: []string{"spec.backup.storages[0].schedules[1].parameters.type"},
+		},
+		{
+			name: "a disabled duplicate-type schedule is not flagged",
+			mutate: schedules(
+				corev1alpha1.InstanceBackupSchedule{Name: "weekly-full", Enabled: true, Cron: "0 1 * * 0"},
+				corev1alpha1.InstanceBackupSchedule{Name: "monthly-full", Enabled: false, Cron: "0 1 1 * *"},
+			),
+		},
+		{
+			name: "duplicate schedule name",
+			mutate: schedules(
+				corev1alpha1.InstanceBackupSchedule{Name: "backup-g9y", Enabled: true, Cron: "0 1 * * *"},
+				corev1alpha1.InstanceBackupSchedule{Name: "backup-g9y", Enabled: true, Cron: "0 1 * * 0", Parameters: raw(`{"type":"diff"}`)},
+			),
+			want: []string{"spec.backup.storages[0].schedules[1].name"},
+		},
+		{
+			name: "schedule parameters with an unknown type",
+			mutate: schedules(corev1alpha1.InstanceBackupSchedule{
+				Name: "backup-g9y", Enabled: true, Cron: "0 1 * * *", Parameters: raw(`{"type":"weekly"}`),
+			}),
+			want: []string{"spec.backup.storages[0].schedules[0].parameters"},
+		},
+		{
+			name: "schedule parameters with an undeclared field",
+			mutate: schedules(corev1alpha1.InstanceBackupSchedule{
+				Name: "backup-g9y", Enabled: true, Cron: "0 1 * * *", Parameters: raw(`{"compress":true}`),
+			}),
+			want: []string{"spec.backup.storages[0].schedules[0].parameters"},
+		},
+		{
+			name: "time retention on a diff schedule",
+			mutate: schedules(
+				corev1alpha1.InstanceBackupSchedule{Name: "nightly-diff", Enabled: true, Cron: "0 1 * * *", Retention: window("7d"), Parameters: raw(`{"type":"diff"}`)},
+			),
+			want: []string{"spec.backup.storages[0].schedules[0].retention.type"},
+		},
+		{
+			name: "count retention on a diff schedule is fine",
+			mutate: schedules(
+				corev1alpha1.InstanceBackupSchedule{Name: "nightly-diff", Enabled: true, Cron: "0 1 * * *", Retention: keep(5), Parameters: raw(`{"type":"diff"}`)},
+			),
 		},
 	}
 

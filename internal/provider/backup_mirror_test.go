@@ -35,6 +35,12 @@ func TestMirrorScheduledBackup(t *testing.T) {
 			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
 			Backup: &corev1alpha1.InstanceBackupSpec{
 				ClassRef: apicommon.ObjectRef{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{{
+					StorageRef: apicommon.ObjectRef{Name: "my-storage"},
+					Schedules: []corev1alpha1.InstanceBackupSchedule{
+						{Name: "nightly-full", Enabled: true, Cron: "0 2 * * *"}, // no Parameters -> type defaults to full
+					},
+				}},
 			},
 		},
 	}
@@ -75,7 +81,8 @@ func TestMirrorScheduledBackup(t *testing.T) {
 	mirror, err := (&Provider{}).Mirror(context.Background(), k8sClient, opBackup)
 	require.NoError(t, err)
 	require.NotNil(t, mirror, "should create a Backup CR for scheduled backup")
-	require.Equal(t, "full", mirror.Spec.ScheduleName, "schedule name should be derived from backup name")
+	require.Equal(t, "nightly-full", mirror.Spec.ScheduleName,
+		"schedule name should be the configured schedule's user-facing Name, resolved by matching its effective type")
 	require.Equal(t, "my-storage", mirror.Spec.StorageRef.Name, "storage name should be resolved from slot map")
 	require.Equal(t, backupv1alpha1.BackupOriginTypeInstance, mirror.Spec.Origin.Type)
 	require.Equal(t, "inst-0hc", mirror.Spec.Origin.InstanceRef.Name)
@@ -245,6 +252,12 @@ func TestMirrorScheduledBackupIncremental(t *testing.T) {
 			ProviderRef: apicommon.ObjectRef{Name: "provider-percona-postgresql"},
 			Backup: &corev1alpha1.InstanceBackupSpec{
 				ClassRef: apicommon.ObjectRef{Name: "pg"},
+				Storages: []corev1alpha1.InstanceBackupStorage{{
+					StorageRef: apicommon.ObjectRef{Name: "bucket-2"},
+					Schedules: []corev1alpha1.InstanceBackupSchedule{
+						{Name: "hourly-incr", Enabled: true, Cron: "0 * * * *", Parameters: raw(`{"type":"incr"}`)},
+					},
+				}},
 			},
 		},
 	}
@@ -281,11 +294,11 @@ func TestMirrorScheduledBackupIncremental(t *testing.T) {
 	mirror, err := (&Provider{}).Mirror(context.Background(), k8sClient, opBackup)
 	require.NoError(t, err)
 	require.NotNil(t, mirror, "should create a Backup CR for scheduled incremental backup")
-	require.Equal(t, "incr", mirror.Spec.ScheduleName, "schedule name should be 'incr'")
+	require.Equal(t, "hourly-incr", mirror.Spec.ScheduleName, "schedule name should be the matching schedule's Name")
 	require.Equal(t, "bucket-2", mirror.Spec.StorageRef.Name, "storage name should be resolved from slot map for repo2")
 }
 
-func TestDeriveScheduleName(t *testing.T) {
+func TestDeriveBackupType(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -341,8 +354,8 @@ func TestDeriveScheduleName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := deriveScheduleName(tt.backupName, tt.clusterName, tt.repoName)
-			assert.Equal(t, tt.want, got)
+			got := deriveBackupType(tt.backupName, tt.clusterName, tt.repoName)
+			assert.Equal(t, tt.want, string(got))
 		})
 	}
 }
@@ -368,7 +381,7 @@ func TestApplyRetentionConfig(t *testing.T) {
 			name:     "full backup with retention",
 			repoName: "repo1",
 			schedules: []corev1alpha1.InstanceBackupSchedule{
-				{Name: "full", Enabled: true, Cron: "0 2 * * *", Retention: count(3)},
+				{Name: "nightly", Enabled: true, Cron: "0 2 * * *", Retention: count(3)},
 			},
 			wantKeys: map[string]string{
 				"repo1-retention-full":      "3",
@@ -379,7 +392,7 @@ func TestApplyRetentionConfig(t *testing.T) {
 			name:     "differential backup with retention",
 			repoName: "repo2",
 			schedules: []corev1alpha1.InstanceBackupSchedule{
-				{Name: "diff", Enabled: true, Cron: "0 3 * * *", Retention: count(5)},
+				{Name: "weekly-diff", Enabled: true, Cron: "0 3 * * *", Retention: count(5), Parameters: raw(`{"type":"diff"}`)},
 			},
 			wantKeys: map[string]string{
 				"repo2-retention-diff": "5",
@@ -402,7 +415,7 @@ func TestApplyRetentionConfig(t *testing.T) {
 			wantKeys: map[string]string{},
 		},
 		{
-			name:     "default schedule name maps to full retention",
+			name:     "no parameters set defaults to full retention",
 			repoName: "repo1",
 			schedules: []corev1alpha1.InstanceBackupSchedule{
 				{Name: "nightly", Enabled: true, Cron: "0 2 * * *", Retention: count(1)},
@@ -427,7 +440,7 @@ func TestApplyRetentionConfig(t *testing.T) {
 			name:     "time retention in weeks converts to days",
 			repoName: "repo1",
 			schedules: []corev1alpha1.InstanceBackupSchedule{
-				{Name: "incr", Enabled: true, Cron: "0 * * * *", Retention: window("4w")},
+				{Name: "hourly-incr", Enabled: true, Cron: "0 * * * *", Retention: window("4w"), Parameters: raw(`{"type":"incr"}`)},
 			},
 			wantKeys: map[string]string{
 				"repo1-retention-full":      "28",
@@ -449,9 +462,9 @@ func TestApplyRetentionConfig(t *testing.T) {
 			name:     "time retention on a differential schedule is rejected",
 			repoName: "repo1",
 			schedules: []corev1alpha1.InstanceBackupSchedule{
-				{Name: "diff", Enabled: true, Cron: "0 3 * * *", Retention: window("7d")},
+				{Name: "nightly-diff", Enabled: true, Cron: "0 3 * * *", Retention: window("7d"), Parameters: raw(`{"type":"diff"}`)},
 			},
-			wantErr: `schedule "diff": pgBackRest only supports count retention for differential backups`,
+			wantErr: `schedule "nightly-diff": pgBackRest only supports count retention for differential backups`,
 		},
 	}
 
@@ -467,6 +480,45 @@ func TestApplyRetentionConfig(t *testing.T) {
 			assert.Equal(t, tt.wantKeys, globalConfig)
 		})
 	}
+}
+
+// TestBuildPGBackRestSchedules demonstrates how multiple enabled schedules on
+// one storage combine into a single pgBackRest PGBackRestBackupSchedules:
+// each schedule's effective type (Parameters.type, default full) fills its
+// own slot independently of its Name, so one storage can run full,
+// differential and incremental backups on three unrelated crons at once. A
+// disabled schedule never fills a slot, even if it would otherwise match one.
+func TestBuildPGBackRestSchedules(t *testing.T) {
+	t.Parallel()
+
+	got, err := buildPGBackRestSchedules([]corev1alpha1.InstanceBackupSchedule{
+		{Name: "nightly", Enabled: true, Cron: "0 1 * * *"}, // no Parameters -> type defaults to full
+		{Name: "weekday-diff", Enabled: true, Cron: "0 1 * * 1", Parameters: raw(`{"type":"diff"}`)},
+		{Name: "weekday-incr", Enabled: true, Cron: "0 1 * * 2", Parameters: raw(`{"type":"incr"}`)},
+		{Name: "disabled-diff", Enabled: false, Cron: "0 2 * * 3", Parameters: raw(`{"type":"diff"}`)},
+	})
+
+	require.NoError(t, err)
+	full, diff, incr := "0 1 * * *", "0 1 * * 1", "0 1 * * 2"
+	assert.Equal(t, &upstreamv1beta1.PGBackRestBackupSchedules{
+		Full:         &full,
+		Differential: &diff,
+		Incremental:  &incr,
+	}, got, "a disabled schedule must not fill its type's slot")
+}
+
+// TestBuildPGBackRestSchedules_InvalidParametersError verifies that an
+// unparsable schedule Parameters payload surfaces as an error instead of
+// silently defaulting, matching the admission-time check in validate.go.
+func TestBuildPGBackRestSchedules_InvalidParametersError(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildPGBackRestSchedules([]corev1alpha1.InstanceBackupSchedule{
+		{Name: "backup-g9y", Enabled: true, Cron: "0 1 * * *", Parameters: raw(`{"type":"weekly"}`)},
+	})
+
+	require.ErrorContains(t, err, `schedule "backup-g9y"`)
+	require.ErrorContains(t, err, `unsupported backup type "weekly"`)
 }
 
 func TestReconcileRepoSlotMap_NewStorages(t *testing.T) {

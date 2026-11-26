@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -87,6 +86,15 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 			}, nil
 		}
 
+		backupParams, paramsErr := parseBackupParameters(backup.Spec.Parameters)
+		if paramsErr != nil {
+			return controller.BackupExecutionStatus{
+				State:             backupv1alpha1.BackupStateFailed,
+				Message:           fmt.Sprintf("spec.parameters: %v", paramsErr),
+				OperatorBackupRef: opRef,
+			}, nil
+		}
+
 		pgCluster := &pgv2.PerconaPGCluster{}
 		if err := c.Client().Get(c.Context(), client.ObjectKey{Namespace: backup.Namespace, Name: backup.Spec.Origin.InstanceRef.Name}, pgCluster); err != nil {
 			if apierrors.IsNotFound(err) {
@@ -163,7 +171,7 @@ func (p *Provider) SyncBackup(c *controller.Context, backup *backupv1alpha1.Back
 			}, nil
 		}
 
-		backupType := resolveBackupType(backup)
+		backupType := backupTypeOf(backupParams)
 
 		opBackup = &pgv2.PerconaPGBackup{
 			ObjectMeta: metav1.ObjectMeta{
@@ -270,6 +278,14 @@ func (p *Provider) SyncRestore(c *controller.Context, restore *backupv1alpha1.Re
 		Group: pgv2.GroupVersion.Group,
 		Kind:  "PerconaPGRestore",
 		Name:  restore.Name,
+	}
+
+	if err := validateRestoreParameters(restore.Spec.Parameters); err != nil {
+		return controller.RestoreExecutionStatus{
+			State:              backupv1alpha1.RestoreStateFailed,
+			Message:            fmt.Sprintf("spec.parameters: %v", err),
+			OperatorRestoreRef: opRef,
+		}, nil
 	}
 
 	repoName, restoreOptions, pending, err := resolveRestoreSource(c, restore, opRef)
@@ -834,22 +850,4 @@ func enqueueRestoreInstance() func(ctx context.Context, obj client.Object) []rec
 			},
 		}}
 	}
-}
-
-// resolveBackupType extracts the pgBackRest backup type from the Backup CR's
-// parameters and returns the pgBackRest CLI --type flag value (full/diff/incr).
-func resolveBackupType(backup *backupv1alpha1.Backup) pg.PgBackupType {
-	if backup.Spec.Parameters == nil || len(backup.Spec.Parameters.Raw) == 0 {
-		return defaultBackupType
-	}
-	var cfg struct {
-		Type pg.PgBackupType `json:"type"`
-	}
-	if err := json.Unmarshal(backup.Spec.Parameters.Raw, &cfg); err != nil {
-		return defaultBackupType
-	}
-	if cfg.Type == "" {
-		return defaultBackupType
-	}
-	return cfg.Type
 }

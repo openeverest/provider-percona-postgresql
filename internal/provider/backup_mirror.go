@@ -83,7 +83,12 @@ func (p *Provider) Mirror(ctx context.Context, c client.Client, obj client.Objec
 		return nil, nil
 	}
 
-	scheduleName := scheduleNameFromBackup(pgBackup)
+	// The PG operator only tracks the pgBackRest backup type (full/diff/incr)
+	// it ran, parsed below from the generated name. The InstanceBackupSchedule
+	// that produced it -- whose Name is what Backup.spec.scheduleName must
+	// carry -- is resolved further down, once the storage is known, by
+	// matching this type against the Instance's configured schedules.
+	backupType := backupTypeFromOperatorBackup(pgBackup)
 
 	instance := &corev1alpha1.Instance{}
 	if err := c.Get(ctx, client.ObjectKey{Namespace: pgBackup.Namespace, Name: pgBackup.Spec.PGCluster}, instance); err != nil {
@@ -142,9 +147,37 @@ func (p *Provider) Mirror(ctx context.Context, c client.Client, obj client.Objec
 			},
 			ClassRef:     apicommon.ObjectRef{Name: instance.Spec.Backup.ClassRef.Name},
 			StorageRef:   apicommon.ObjectRef{Name: storageName},
-			ScheduleName: scheduleName,
+			ScheduleName: scheduleNameForType(instance.Spec.Backup, storageName, backupType),
 		},
 	}, nil
+}
+
+// scheduleNameForType returns the user-facing Name of the
+// InstanceBackupSchedule on storageName whose effective pgBackRest type
+// (Parameters.type, default full) is backupType, so mirrored Backups carry
+// the schedule's real identity rather than its type. When no schedule
+// matches -- e.g. it was renamed or removed after the operator fired this
+// backup -- backupType itself is used as a best-effort fallback so the field
+// is never empty for a scheduled backup.
+func scheduleNameForType(backup *corev1alpha1.InstanceBackupSpec, storageName string, backupType pg.PgBackupType) string {
+	if backup == nil {
+		return string(backupType)
+	}
+	for _, storage := range backup.Storages {
+		if storage.StorageRef.Name != storageName {
+			continue
+		}
+		for _, schedule := range storage.Schedules {
+			cfg, err := parseBackupParameters(schedule.Parameters)
+			if err != nil {
+				continue
+			}
+			if backupTypeOf(cfg) == backupType {
+				return schedule.Name
+			}
+		}
+	}
+	return string(backupType)
 }
 
 // repoNameToStorageName resolves a pgBackRest repo name (e.g. "repo1") back to
@@ -198,35 +231,35 @@ func isScheduledBackup(pgBackup *pgv2.PerconaPGBackup) bool {
 	return pgBackup.GenerateName != ""
 }
 
-// scheduleNameFromBackup derives the schedule name from the PerconaPGBackup.
-// The PG operator names scheduled backups as "<cluster>-<repo>-<type>-<random>",
-// so we extract the backup type (e.g. "full", "incr", "diff") as the schedule name.
-func scheduleNameFromBackup(pgBackup *pgv2.PerconaPGBackup) string {
-	return deriveScheduleName(pgBackup.Name, pgBackup.Spec.PGCluster, safeDerefString(pgBackup.Spec.RepoName))
+// backupTypeFromOperatorBackup extracts the pgBackRest backup type
+// (full/diff/incr) the PG operator ran for this scheduled PerconaPGBackup,
+// parsed from its generated name.
+func backupTypeFromOperatorBackup(pgBackup *pgv2.PerconaPGBackup) pg.PgBackupType {
+	return deriveBackupType(pgBackup.Name, pgBackup.Spec.PGCluster, safeDerefString(pgBackup.Spec.RepoName))
 }
 
-// deriveScheduleName extracts the backup type (schedule name) from a
+// deriveBackupType extracts the pgBackRest backup type from a
 // PG-operator-generated backup name. The naming convention is:
 //
 //	<cluster>-<repo>-<type>-<random>
 //
 // For example "inst-0hc-repo1-full-p9dz9" → "full".
-// If the name doesn't match the expected pattern, the full name is returned as
-// a fallback schedule name.
-func deriveScheduleName(backupName, clusterName, repoName string) string {
+// If the name doesn't match the expected pattern, the full name is returned
+// as an opaque fallback.
+func deriveBackupType(backupName, clusterName, repoName string) pg.PgBackupType {
 	prefix := clusterName + "-" + repoName + "-"
 	if !strings.HasPrefix(backupName, prefix) {
-		// Cannot parse; use the backup name itself as the schedule name.
-		return backupName
+		// Cannot parse; use the backup name itself as an opaque fallback.
+		return pg.PgBackupType(backupName)
 	}
 	remainder := strings.TrimPrefix(backupName, prefix)
 	// remainder is "<type>-<random>" or "<type>-<random>-<random>".
 	// Extract the type portion before the last dash-separated random suffix.
 	parts := strings.SplitN(remainder, "-", 2)
 	if len(parts) == 0 || parts[0] == "" {
-		return backupName
+		return pg.PgBackupType(backupName)
 	}
-	return parts[0]
+	return pg.PgBackupType(parts[0])
 }
 
 func applyBackupSettings(c *controller.Context, pgCluster *pgv2.PerconaPGCluster) error {
@@ -478,7 +511,11 @@ func buildPGBackRestRepos(c *controller.Context, live *pgv2.PerconaPGCluster, sl
 			r, err := buildPGBackRestS3Repo(c, s.Storage, repoName, s.Path, secretName)
 			if err == nil {
 				if len(s.Entry.Schedules) > 0 {
-					r.repo.BackupSchedules = buildPGBackRestSchedules(s.Entry.Schedules)
+					sched, err := buildPGBackRestSchedules(s.Entry.Schedules)
+					if err != nil {
+						return pgBackRestRepos{}, &controller.BackupConfigError{Reason: "InvalidScheduleParameters", Message: err.Error()}
+					}
+					r.repo.BackupSchedules = sched
 					if err := applyRetentionConfig(r.global, repoName, s.Entry.Schedules); err != nil {
 						return pgBackRestRepos{}, &controller.BackupConfigError{Reason: "RetentionTypeUnsupported", Message: err.Error()}
 					}
@@ -595,28 +632,34 @@ func buildPGBackRestS3Repo(c *controller.Context, bs *backupv1alpha1.BackupStora
 	return r, nil
 }
 
-func buildPGBackRestSchedules(schedules []corev1alpha1.InstanceBackupSchedule) *upstreamv1beta1.PGBackRestBackupSchedules {
+// buildPGBackRestSchedules translates the enabled schedules into the
+// pgBackRest cron slots the operator understands: one per backup type
+// (full/diff/incr), selected by each schedule's effective type
+// (Parameters.type, default full) -- not by its Name, which is just the
+// user-facing identifier mirrored onto Backup.spec.scheduleName. Validate
+// rejects more than one enabled schedule resolving to the same type per
+// storage.
+func buildPGBackRestSchedules(schedules []corev1alpha1.InstanceBackupSchedule) (*upstreamv1beta1.PGBackRestBackupSchedules, error) {
 	s := &upstreamv1beta1.PGBackRestBackupSchedules{}
 	for _, schedule := range schedules {
 		if !schedule.Enabled {
 			continue
 		}
-		// Map schedule names to pgBackRest backup types.
-		// Default to full backup if not specified.
+		cfg, err := parseBackupParameters(schedule.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("schedule %q: %w", schedule.Name, err)
+		}
 		cron := schedule.Cron
-		switch pg.PgBackupType(strings.ToLower(schedule.Name)) {
+		switch backupTypeOf(cfg) {
 		case pg.PgBackupTypeFull:
 			s.Full = &cron
 		case pg.PgBackupTypeDiff:
 			s.Differential = &cron
 		case pg.PgBackupTypeIncr:
 			s.Incremental = &cron
-		default:
-			// Default unrecognized schedule names to full backup.
-			s.Full = &cron
 		}
 	}
-	return s
+	return s, nil
 }
 
 // applyRetentionConfig sets pgBackRest retention global config keys based on
@@ -634,12 +677,16 @@ func applyRetentionConfig(globalConfig map[string]string, repoName string, sched
 		if !schedule.Enabled || schedule.Retention == nil {
 			continue
 		}
+		cfg, err := parseBackupParameters(schedule.Parameters)
+		if err != nil {
+			return fmt.Errorf("schedule %q: %w", schedule.Name, err)
+		}
 		value, retentionType, err := pgBackRestRetention(schedule.Retention)
 		if err != nil {
 			return fmt.Errorf("schedule %q: %w", schedule.Name, err)
 		}
-		switch pg.PgBackupType(strings.ToLower(schedule.Name)) {
-		case pg.PgBackupTypeFull, "":
+		switch backupTypeOf(cfg) {
+		case pg.PgBackupTypeFull:
 			globalConfig[repoName+"-retention-full"] = value
 			globalConfig[repoName+"-retention-full-type"] = retentionType
 		case pg.PgBackupTypeDiff:
@@ -653,10 +700,6 @@ func applyRetentionConfig(globalConfig map[string]string, repoName string, sched
 			// full backup retention. Setting full retention here ensures
 			// that old incremental chains are cleaned up when the parent
 			// full backup expires.
-			globalConfig[repoName+"-retention-full"] = value
-			globalConfig[repoName+"-retention-full-type"] = retentionType
-		default:
-			// Unrecognized schedule names default to full backup type.
 			globalConfig[repoName+"-retention-full"] = value
 			globalConfig[repoName+"-retention-full-type"] = retentionType
 		}
