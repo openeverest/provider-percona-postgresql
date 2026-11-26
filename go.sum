@@ -242,12 +242,16 @@ github.com/onsi/ginkgo/v2 v2.33.0 h1:C8gBA6Uc2ZEubiV+SXiu5tZnMTwEmXHgkJwGozKtZf8
 github.com/onsi/ginkgo/v2 v2.33.0/go.mod h1:+aXOY+vzZ5mu2iI2HpTZUPmM//oQfsNFX6gU9kNcA44=
 github.com/onsi/gomega v1.44.0 h1:eAiGl3Pw5jz5GQdDff0BcxYpAX1JxW8xD7mFUuwNfZQ=
 github.com/onsi/gomega v1.44.0/go.mod h1:e/C2HwaZ1DhvjzXXuFhcR7hY7Sh9pl7MmoWKEjzwcdA=
+github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U=
+github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
+github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJwooC2xJA040=
+github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
 github.com/openeverest/monitoring-pmm/api v0.0.0-20261110082751-22ff528eb0dc h1:Ek7aIT5oK2omf4dZ4e7QT9XF/rilfEK+iPwKpysF5Zk=
 github.com/openeverest/monitoring-pmm/api v0.0.0-20261110082751-22ff528eb0dc/go.mod h1:LU0WsxUAvP6+39FZDCCXYW4lOrTuDb67/U7ZSJXz1LQ=
 github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261125185706-a1ddf4732eeb h1:d8T7SfAPsaTD4Ul9TeNcLU+icxkmihNALY1n/V6vqWo=
 github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261125185706-a1ddf4732eeb/go.mod h1:ZO1pt2uTExw6WH7oyZFmYLIFeauS+vDjVDztTY8BGgc=
-github.com/openeverest/provider-sdk v0.4.1-0.20261125185722-f7ae82ac9111 h1:9QOlNTzPDE9GcO/31NSXjHGdzXBgG80wNvo7Jbkr6q8=
-github.com/openeverest/provider-sdk v0.4.1-0.20261125185722-f7ae82ac9111/go.mod h1:Q+Ridn2M4fgMVvZC6hjLBbKlYdhY5au98gu9EcChCYk=
+github.com/openeverest/provider-sdk v0.4.1-0.20261125224956-add2fdc30c65 h1:6xD6oEbhcqtOsUX1k74ERp72y9QVUAVlRaCvLTDAkKA=
+github.com/openeverest/provider-sdk v0.4.1-0.20261125224956-add2fdc30c65/go.mod h1:QubGk59wZCoTz1iAuIQPqQ89EKBmmR/D+Mcgu4uHGfo=
 github.com/pborman/getopt v0.0.0-20170112200414-7148bc3a4c30/go.mod h1:85jBQOZwpVEaDAr341tbn15RS4fCAsIst0qp7i8ex1o=
 github.com/percona/percona-postgresql-operator/v3 v3.1.0 h1:5mf2inyzccxjKuTQlwlE9/q6Cm5ZCyC2N/YEHjUEX0I=
 github.com/percona/percona-postgresql-operator/v3 v3.1.0/go.mod h1:fH/N9W2hTPzMurRKhRDWgHgJ8AmktPU2vzvhEDbFSBg=
@@ -416,6 +420,8 @@ k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad h1:oXImqH8mQNk7PmvzKhmN3d
 k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad/go.mod h1:0/mqHCVhlumdJ3BhCfnjSZQE037nAhNodh1/hK0T8/I=
 k8s.io/utils v0.0.0-20260626114624-be93311217bd h1:Ea7fgQ5we8Y9T0OX5o0dAHzQOBRI07D/dEYRaB9ZZEs=
 k8s.io/utils v0.0.0-20260626114624-be93311217bd/go.mod h1:xDxuJ0whA3d0I4mf/C4ppKHxXynQ+fxnkmQH0vTHnuk=
+oras.land/oras-go/v2 v2.6.2 h1:N04RXngAp1LJKTG6ifz3xHPipasEkWr+hFmInja5YKo=
+oras.land/oras-go/v2 v2.6.2/go.mod h1:PlTtg4JTDJkDe8yVHpM2wz7/YDc00GVas+i4jAW2TZ4=
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.36.0 h1:/YpDJ4vReG7ZmzSpBGxduXgywWkJU9zHubgJG03MT+Y=
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.36.0/go.mod h1:tJo1aepTXyR+8Xs3sUsGBDk4Ub2AM5dPAPKJx0mpm5c=
 sigs.k8s.io/cli-utils v0.37.2 h1:GOfKw5RV2HDQZDJlru5KkfLO1tbxqMoyn1IYUxqBpNg=
