@@ -112,11 +112,16 @@ helm install provider-percona-postgresql \
   release and the later ones that keep its contract, such as its patch releases, and expires
   with the first OpenEverest release that changes the contract; set ahead of an upgrade, it
   does nothing until that release is installed.
-- The chart sets no annotation for any tool itself: `openeverest.annotations` adds
-  annotations to the `Provider` and its `BackupClass`. With
-  `argocd.argoproj.io/sync-wave: "-1"`, for example, Argo CD applies them before the provider
-  and the bundled operator, so an OpenEverest that refuses them stops the sync before
-  anything starts.
+- The install fails that way under Helm and Flux, which read the cluster when they render the
+  chart. Argo CD renders it without reading the cluster, as does `helm template` for
+  pre-rendered manifests, so nothing fails there. Instead, the provider holds a new build until
+  the installed OpenEverest supports it: its pods run but are not ready, and a Warning Event on
+  its `Provider` names the OpenEverest it waits for. Under the default `RollingUpdate` strategy
+  the previous build keeps serving, and the new one starts by itself once OpenEverest is
+  upgraded.
+- The chart sets no annotation for any tool itself: `openeverest.annotations` adds annotations
+  to the `Provider` and its `BackupClass`, such as an Argo CD sync wave
+  (`argocd.argoproj.io/sync-wave: "-1"`).
 
 To install from a checkout instead, `make helm-install` builds the chart dependencies
 and installs it against your current kube context.
