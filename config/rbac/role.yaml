@@ -50,14 +50,6 @@ rules:
   - create
   - patch
 - apiGroups:
-  - apiextensions.k8s.io
-  resourceNames:
-  - providers.core.openeverest.io
-  resources:
-  - customresourcedefinitions
-  verbs:
-  - get
-- apiGroups:
   - apps
   resources:
   - deployments
@@ -154,14 +146,6 @@ rules:
   - get
   - list
   - watch
-- apiGroups:
-  - core.openeverest.io
-  resourceNames:
-  - provider-percona-postgresql
-  resources:
-  - providers/status
-  verbs:
-  - patch
 - apiGroups:
   - discovery.k8s.io
   resources:
