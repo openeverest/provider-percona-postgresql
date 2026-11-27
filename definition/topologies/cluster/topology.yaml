@@ -48,6 +48,7 @@ ui:
                     path: spec.components.engine.replicas
                     uiType: number
                     validation:
+                        required: true
                         min: 1
                 diskSize:
                     fieldParams:
@@ -58,6 +59,7 @@ ui:
                     path: spec.components.engine.storage.size
                     uiType: number
                     validation:
+                      required: true
                       min: 1
                 resourcesLimits:
                     components:

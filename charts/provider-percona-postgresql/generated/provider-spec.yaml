@@ -509,6 +509,7 @@ spec:
               uiType: number
               validation:
                 min: 1
+                required: true
             numberOfNodes:
               fieldParams:
                 defaultValue: 2
@@ -517,6 +518,7 @@ spec:
               uiType: number
               validation:
                 min: 1
+                required: true
             resourcesLimits:
               components:
                 cpu:
